@@ -1,0 +1,9 @@
+AsterPump X17 Maintenance Policy
+
+The filter cassette must be replaced every 19 days, not monthly. The replacement date must be written on the green service tag.
+
+Calibration cycle C2 must be run after replacing the silver impeller sensor, moving the unit more than 5 meters, or updating firmware.
+
+The coolant loop should be inspected every 11 days. If the return valve shows residue, drain 200 ml of coolant before restarting the pressure monitor.
+
+Only Level 2 technicians may approve operation after repeated E-77 pressure echo events. Level 1 operators may perform standard filter cassette replacement.

@@ -1,0 +1,9 @@
+AsterPump X17 Error Codes
+
+Error code E-41 means the silver impeller sensor is misaligned. To resolve E-41, power down the unit, reseat the silver impeller sensor, and run calibration cycle C2.
+
+Error code E-77 means the coolant loop has detected a pressure echo. To resolve E-77, inspect the return valve, drain 200 ml of coolant, and restart the pressure monitor.
+
+Error code E-93 means the filter cassette has expired. To resolve E-93, replace the filter cassette and confirm the cassette date stamp in the service panel.
+
+If E-77 appears twice within one hour, do not restart the unit. Escalate to a Level 2 technician and leave the pressure monitor offline.

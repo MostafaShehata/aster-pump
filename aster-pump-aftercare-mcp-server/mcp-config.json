@@ -1,0 +1,38 @@
+{
+  "name": "aster-pump-aftercare-mcp-server",
+  "description": "Official MCP Streamable HTTP server for image analysis, ticket DB operations, status lookup, and simulated email.",
+  "transport": "streamable-http",
+  "url": "http://localhost:8200/mcp",
+  "tools": [
+    {
+      "name": "analyze_image",
+      "protocol_method": "tools/call",
+      "description": "Send an uploaded image or file to the Image AI service and return detected labels."
+    },
+    {
+      "name": "create_ticket",
+      "protocol_method": "tools/call",
+      "description": "Insert analyzed support ticket information into PostgreSQL."
+    },
+    {
+      "name": "update_technical_steps",
+      "protocol_method": "tools/call",
+      "description": "Store RAG troubleshooting steps on an existing support ticket."
+    },
+    {
+      "name": "send_customer_email",
+      "protocol_method": "tools/call",
+      "description": "Send or simulate an email reply and mark the ticket completed."
+    },
+    {
+      "name": "get_ticket",
+      "protocol_method": "tools/call",
+      "description": "Return one support ticket by ticket ID."
+    },
+    {
+      "name": "get_latest_ticket_for_customer",
+      "protocol_method": "tools/call",
+      "description": "Return the latest support ticket for a customer email."
+    }
+  ]
+}

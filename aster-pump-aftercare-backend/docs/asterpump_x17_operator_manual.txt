@@ -1,0 +1,9 @@
+AsterPump X17 Operator Manual
+
+The AsterPump X17 is a fictional cooling unit used for this local RAG proof of concept. It has three operating modes: Bluefin, Orchard, and Nightglass.
+
+Bluefin mode is used for normal daytime cooling. Orchard mode is used when humidity is above 72 percent. Nightglass mode is used during silent overnight operation.
+
+Operators should not use Orchard mode below 72 percent humidity because the unit may over-condense the intake chamber. Nightglass mode reduces fan activity and should not be used when the unit is recovering from a pressure echo.
+
+The control dial should be set to position 4 during normal Bluefin operation. Position 2 is reserved for Nightglass mode. Position 6 is reserved for Orchard mode.
