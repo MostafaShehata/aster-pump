@@ -110,6 +110,72 @@ Examples:
 - Manual/RAG question: `What is Bluefin mode?`
 - General model question: `Where is Egypt?`
 
+## Detailed RAG Flow
+
+RAG means Retrieval Augmented Generation. In this PoC, the model does not know
+the fictional Aster Pump manual from training. The backend reads local manual
+files, embeds their text, stores the vectors in Qdrant, retrieves matching
+manual chunks at question time, and gives those chunks to the local model as
+context.
+
+Manual source files live in:
+
+```text
+aster-pump-aftercare-backend/docs
+```
+
+Those files include the PDF manual and supporting text manuals. The backend
+indexes them when the backend container starts.
+
+```mermaid
+sequenceDiagram
+    participant Browser as Browser / React UI
+    participant Nginx as Frontend Nginx
+    participant API as Backend FastAPI
+    participant RagService as RAG Service
+    participant Files as Manual Files /app/docs
+    participant Loader as Document Loader
+    participant Chunker as Text Chunker
+    participant Embedder as FastEmbed BAAI/bge-small-en-v1.5
+    participant Qdrant as Qdrant Vector DB
+    participant Prompt as Prompt Builder
+    participant Model as Ollama qwen3:1.7b
+
+    Note over API,Qdrant: Startup indexing path
+    API->>RagService: ensure_index() during backend startup
+    RagService->>Files: Read PDF and text manuals
+    Files-->>Loader: Return manual file content
+    Loader-->>RagService: Parsed documents with source names
+    RagService->>Chunker: Split documents into small text chunks
+    Chunker-->>RagService: Return chunk list
+    RagService->>Qdrant: Delete and recreate collection
+    loop For each manual chunk
+        RagService->>Embedder: Embed chunk text
+        Embedder-->>RagService: 384-dimensional vector
+        RagService->>Qdrant: Upsert vector + source + chunk text
+    end
+    Qdrant-->>RagService: Indexed collection ready
+
+    Note over Browser,Model: Runtime question path
+    Browser->>Nginx: User asks "What is Bluefin mode?" with Use Aster manual checked
+    Nginx->>API: POST /api/chat
+    API->>RagService: retrieve_context(question)
+    RagService->>Embedder: Embed the user question
+    Embedder-->>RagService: Question vector
+    RagService->>Qdrant: Search nearest manual vectors
+    Qdrant-->>RagService: Return top matching chunks and sources
+    RagService-->>API: RAG context + source file names
+    API->>Prompt: Build model messages with retrieved context
+    Prompt-->>API: System prompt + RAG context + user question
+    API->>Model: POST /api/chat
+    Model-->>API: Answer grounded in retrieved manual text
+    API-->>Nginx: Chat response with answer and sources
+    Nginx-->>Browser: Show answer in chat panel
+```
+
+If **Use Aster manual** is unchecked, the runtime path skips `RagService`,
+`FastEmbed`, and `Qdrant`. The backend sends the question directly to Ollama.
+
 ## System Map
 
 ```mermaid
