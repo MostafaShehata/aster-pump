@@ -28,29 +28,42 @@ class RagService:
     def ensure_index(self) -> None:
         """Rebuild the local RAG index from the docs folder."""
 
+        logging.info("story.rag | start indexing local manuals docs_dir=%s", DOCS_DIR)
         documents = self.loader.load_documents()
-        logging.info("rag | loaded documents count=%s dir=%s", len(documents), DOCS_DIR)
+        logging.info(
+            "story.rag | loaded documents count=%s dir=%s sources=%s",
+            len(documents),
+            DOCS_DIR,
+            [document.source for document in documents],
+        )
         chunks = [
             chunk
             for document in documents
             for chunk in self.chunker.chunk_document(document)
         ]
-        logging.info("rag | prepared chunks count=%s embedding_model=%s", len(chunks), settings.embedding_model_name)
+        logging.info(
+            "story.rag | prepared chunks count=%s embedding_model=%s chunks=%s",
+            len(chunks),
+            settings.embedding_model_name,
+            [{"source": chunk.source, "index": chunk.chunk_index, "text": chunk.text} for chunk in chunks],
+        )
         self.vector_store.rebuild_collection(chunks)
+        logging.info("story.rag | finished indexing local manuals collection=%s", settings.rag_collection_name)
 
     def retrieve_context(self, request: ChatRequest) -> RagResult:
         """Return relevant context when RAG is enabled for a request."""
 
         if not request.use_rag:
-            logging.info("rag | skipped for chat because use_rag=false")
+            logging.info("story.rag | skipped chat retrieval because use_rag=false question=%r", request.message)
             return RagResult(context="", sources=[])
 
+        logging.info("story.rag | retrieving chat context question=%r", request.message)
         return self.vector_store.search(request.message)
 
     def retrieve_for_question(self, question: str) -> RagResult:
         """Search RAG directly for agent-generated questions."""
 
-        logging.info("rag | agent retrieval query=%r", question[:160])
+        logging.info("story.rag | retrieving agent context question=%r", question)
         return self.vector_store.search(question)
 
 

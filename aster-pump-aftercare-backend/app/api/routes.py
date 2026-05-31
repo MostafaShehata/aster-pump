@@ -25,18 +25,20 @@ async def chat(request: ChatRequest) -> ChatResponse:
     """Send a chat request to the local model with optional RAG context."""
 
     logging.info(
-        "chat | received question use_rag=%s history_items=%s text=%r",
+        "story.chat | received chat request use_rag=%s history_items=%s message=%r history=%s",
         request.use_rag,
         len(request.history),
-        request.message[:120],
+        request.message,
+        [{"role": item.role, "content": item.content} for item in request.history],
     )
     try:
         response = await chat_service.chat(request)
         logging.info(
-            "chat | completed model=%s used_rag=%s sources=%s",
+            "story.chat | completed chat request model=%s used_rag=%s sources=%s reply=%r",
             response.model,
             response.used_rag,
             response.sources,
+            response.reply,
         )
         return response
     except RuntimeError as exc:
@@ -59,11 +61,12 @@ async def create_support_ticket(
         raise HTTPException(status_code=400, detail="Provide an error photo, a text description, or both.")
 
     logging.info(
-        "ticket | received support request email=%s filename=%s bytes=%s description_present=%s",
+        "story.ticket | received support request email=%s description=%r image_filename=%s image_bytes=%s image_content_type=%s",
         customer_email,
+        description,
         photo.filename if photo is not None else "",
         len(image_bytes),
-        bool(description),
+        photo.content_type if photo is not None else "",
     )
     try:
         final_state = await aftercare_workflow.run(
@@ -77,10 +80,14 @@ async def create_support_ticket(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     logging.info(
-        "ticket | completed ticket_id=%s status=%s error_code=%s email_sent=%s",
+        "story.ticket | completed support request ticket_id=%s status=%s detected_objects=%s error_code=%s technical_steps=%r reply_subject=%r reply_body=%r email_sent=%s",
         final_state["ticket_id"],
         final_state["status"],
+        final_state.get("detected_objects", []),
         final_state.get("detected_error_code"),
+        final_state.get("technical_steps", ""),
+        final_state.get("reply_subject", ""),
+        final_state.get("reply_body", ""),
         bool(final_state.get("email_sent")),
     )
     return TicketResponse(
@@ -100,7 +107,7 @@ async def create_support_ticket(
 async def get_ticket_status(ticket_id: int) -> TicketStatusResponse:
     """Return ticket status by ticket ID."""
 
-    logging.info("ticket-status | looking up ticket_id=%s", ticket_id)
+    logging.info("story.ticket-status | looking up ticket_id=%s", ticket_id)
     ticket = await mcp_client.get_ticket(ticket_id)
     if ticket is None:
         raise HTTPException(status_code=404, detail="Ticket not found.")
@@ -112,7 +119,7 @@ async def get_ticket_status(ticket_id: int) -> TicketStatusResponse:
 async def get_latest_ticket_for_email(email: str) -> TicketStatusResponse:
     """Return the latest support ticket for a customer email."""
 
-    logging.info("ticket-status | looking up latest ticket email=%s", email)
+    logging.info("story.ticket-status | looking up latest ticket email=%s", email)
     ticket = await mcp_client.get_latest_ticket_for_customer(email)
     if ticket is None:
         raise HTTPException(status_code=404, detail="No ticket found for email.")

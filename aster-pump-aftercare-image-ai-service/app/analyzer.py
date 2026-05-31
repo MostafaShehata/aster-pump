@@ -30,6 +30,12 @@ class SearchableTextExtractor:
     def extract(self, uploaded_image: UploadedImage) -> str:
         """Return filename plus readable content bytes as one search string."""
 
+        logging.info(
+            "story.image-ai.extractor | extracting searchable metadata filename=%s image_bytes=%s max_bytes=%s",
+            uploaded_image.filename,
+            len(uploaded_image.content),
+            self.max_bytes,
+        )
         readable_content = uploaded_image.content[: self.max_bytes].decode(
             "utf-8",
             errors="ignore",
@@ -97,13 +103,21 @@ class ImageAnalyzer:
 
         searchable_text = self.extractor.extract(uploaded_image)
         objects: list[str] = []
-        logging.info("analyzer | running detectors filename=%s", uploaded_image.filename)
+        logging.info(
+            "story.image-ai.analyzer | running detectors filename=%s image_bytes=%s detector_count=%s",
+            uploaded_image.filename,
+            len(uploaded_image.content),
+            len(self.detectors),
+        )
 
         for detector in self.detectors:
-            for label in detector.detect(searchable_text):
+            detector_name = detector.__class__.__name__
+            labels = detector.detect(searchable_text)
+            logging.info("story.image-ai.analyzer | detector=%s labels=%s", detector_name, labels)
+            for label in labels:
                 if label not in objects:
                     objects.append(label)
 
         result = objects or [self.UNKNOWN_LABEL]
-        logging.info("analyzer | result=%s", result)
+        logging.info("story.image-ai.analyzer | final result=%s", result)
         return result

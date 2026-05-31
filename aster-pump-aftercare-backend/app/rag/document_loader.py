@@ -1,4 +1,5 @@
 from pathlib import Path
+import logging
 
 from pypdf import PdfReader
 
@@ -17,10 +18,14 @@ class DocumentLoader:
         documents: list[Document] = []
 
         for path in sorted(self.docs_dir.glob("*.txt")):
-            documents.append(Document(source=path.name, text=path.read_text(encoding="utf-8")))
+            text = path.read_text(encoding="utf-8")
+            logging.info("story.rag-loader | loaded text document source=%s text=%r", path.name, text)
+            documents.append(Document(source=path.name, text=text))
 
         for path in sorted(self.docs_dir.glob("*.pdf")):
-            documents.append(Document(source=path.name, text=self.read_pdf_text(path)))
+            text = self.read_pdf_text(path)
+            logging.info("story.rag-loader | loaded PDF document source=%s text=%r", path.name, text)
+            documents.append(Document(source=path.name, text=text))
 
         return [document for document in documents if document.text.strip()]
 
@@ -28,6 +33,7 @@ class DocumentLoader:
         """Extract searchable text from a local PDF guide."""
 
         reader = PdfReader(str(path))
+        logging.info("story.rag-loader | extracting PDF text source=%s pages=%s", path.name, len(reader.pages))
         pages = [page.extract_text() or "" for page in reader.pages]
         return "\n\n".join(page.strip() for page in pages if page.strip())
 
@@ -42,6 +48,12 @@ class TextChunker:
         """Split one document into numbered chunks."""
 
         chunks = self.chunk_text(document.text)
+        logging.info(
+            "story.rag-chunker | chunked document source=%s chunk_count=%s chunks=%s",
+            document.source,
+            len(chunks),
+            chunks,
+        )
         return [
             DocumentChunk(source=document.source, chunk_index=index, text=chunk)
             for index, chunk in enumerate(chunks)
@@ -51,6 +63,7 @@ class TextChunker:
         """Group paragraphs into chunks that fit the configured word budget."""
 
         paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
+        logging.info("story.rag-chunker | splitting text paragraphs=%s max_words=%s text=%r", len(paragraphs), self.max_words, text)
         chunks: list[str] = []
         current: list[str] = []
 
@@ -65,4 +78,3 @@ class TextChunker:
             chunks.append(" ".join(current))
 
         return chunks
-

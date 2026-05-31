@@ -45,7 +45,7 @@ async def analyze_image(
         raise ValueError("Uploaded file is empty.")
 
     logging.info(
-        "tool.analyze_image | received filename=%s bytes=%s content_type=%s",
+        "story.mcp.tool.analyze_image | received image filename=%s image_bytes=%s content_type=%s",
         filename,
         len(content),
         content_type,
@@ -55,7 +55,7 @@ async def analyze_image(
         content=content,
         content_type=content_type,
     )
-    logging.info("tool.analyze_image | detected objects=%s", objects)
+    logging.info("story.mcp.tool.analyze_image | image service replied objects=%s", objects)
     return {"objects": objects}
 
 
@@ -68,8 +68,9 @@ def create_ticket(
     """Insert analyzed support-ticket information into PostgreSQL."""
 
     logging.info(
-        "tool.create_ticket | inserting email=%s detected=%s",
+        "story.mcp.tool.create_ticket | inserting ticket email=%s description=%r detected_objects=%s",
         customer_email,
+        description,
         detected_objects,
     )
     ticket = ticket_repository.create_ticket(
@@ -77,7 +78,7 @@ def create_ticket(
         description=description,
         detected_objects=detected_objects,
     )
-    logging.info("tool.create_ticket | created ticket_id=%s status=%s", ticket["id"], ticket["status"])
+    logging.info("story.mcp.tool.create_ticket | created ticket=%s", ticket)
     return ticket
 
 
@@ -85,14 +86,18 @@ def create_ticket(
 def update_technical_steps(ticket_id: int, technical_steps: str) -> dict:
     """Store generated troubleshooting steps on an existing ticket."""
 
-    logging.info("tool.update_technical_steps | updating ticket_id=%s", ticket_id)
+    logging.info(
+        "story.mcp.tool.update_technical_steps | updating ticket_id=%s technical_steps=%r",
+        ticket_id,
+        technical_steps,
+    )
     ticket = ticket_repository.attach_technical_steps(
         ticket_id=ticket_id,
         technical_steps=technical_steps,
     )
     if ticket is None:
         raise ValueError("Ticket not found.")
-    logging.info("tool.update_technical_steps | updated ticket_id=%s status=%s", ticket_id, ticket["status"])
+    logging.info("story.mcp.tool.update_technical_steps | updated ticket=%s", ticket)
     return ticket
 
 
@@ -101,7 +106,13 @@ def send_customer_email(ticket_id: int, to: str, subject: str, body: str) -> dic
     """Simulate sending a customer email and mark the ticket completed."""
 
     timestamp = datetime.now(timezone.utc).isoformat()
-    logging.info("tool.send_customer_email | sending ticket_id=%s to=%s subject=%r", ticket_id, to, subject)
+    logging.info(
+        "story.mcp.tool.send_customer_email | sending ticket_id=%s to=%s subject=%r body=%r",
+        ticket_id,
+        to,
+        subject,
+        body,
+    )
     record = {
         "timestamp": timestamp,
         "ticket_id": ticket_id,
@@ -115,7 +126,7 @@ def send_customer_email(ticket_id: int, to: str, subject: str, body: str) -> dic
         log_file.write(json.dumps(record) + "\n")
 
     ticket_repository.mark_email_sent(ticket_id, subject, body)
-    logging.info("tool.send_customer_email | sent ticket_id=%s log_path=%s", ticket_id, LOG_PATH)
+    logging.info("story.mcp.tool.send_customer_email | sent ticket_id=%s log_path=%s", ticket_id, LOG_PATH)
     return {"status": "sent", "sent_at": timestamp, "ticket_id": ticket_id}
 
 
@@ -123,16 +134,20 @@ def send_customer_email(ticket_id: int, to: str, subject: str, body: str) -> dic
 def get_ticket(ticket_id: int):
     """Return one ticket by ID, or null when it does not exist."""
 
-    logging.info("tool.get_ticket | ticket_id=%s", ticket_id)
-    return ticket_repository.get_ticket(ticket_id)
+    logging.info("story.mcp.tool.get_ticket | ticket_id=%s", ticket_id)
+    ticket = ticket_repository.get_ticket(ticket_id)
+    logging.info("story.mcp.tool.get_ticket | result=%s", ticket)
+    return ticket
 
 
 @mcp.tool()
 def get_latest_ticket_for_customer(customer_email: str):
     """Return the most recent support ticket for a customer email."""
 
-    logging.info("tool.get_latest_ticket_for_customer | email=%s", customer_email)
-    return ticket_repository.latest_ticket_for_email(customer_email)
+    logging.info("story.mcp.tool.get_latest_ticket_for_customer | email=%s", customer_email)
+    ticket = ticket_repository.latest_ticket_for_email(customer_email)
+    logging.info("story.mcp.tool.get_latest_ticket_for_customer | result=%s", ticket)
+    return ticket
 
 
 @mcp.resource("config://mcp")
@@ -152,11 +167,11 @@ async def health(_: object) -> JSONResponse:
 async def lifespan(_: Starlette):
     """Start the MCP session manager when Uvicorn starts the ASGI app."""
 
-    logging.info("startup | official MCP Streamable HTTP server starting")
+    logging.info("story.mcp.startup | official MCP Streamable HTTP server starting")
     async with mcp.session_manager.run():
-        logging.info("startup | mcp session manager ready")
+        logging.info("story.mcp.startup | mcp session manager ready")
         yield
-    logging.info("shutdown | mcp session manager stopped")
+    logging.info("story.mcp.shutdown | mcp session manager stopped")
 
 
 app = Starlette(

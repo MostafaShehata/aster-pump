@@ -43,7 +43,7 @@ async def health() -> dict[str, str]:
 async def test_page() -> FileResponse:
     """Serve a small browser page for manually testing image uploads."""
 
-    logging.info("test-page | serving manual test page")
+    logging.info("story.image-ai.test-page | serving manual test page")
     return FileResponse(STATIC_DIR / "test.html")
 
 
@@ -58,12 +58,12 @@ async def analyze_image(file: UploadFile = File(...)) -> AnalyzeImageResponse:
 
     content = await file.read()
     logging.info(
-        "analyze-image | received filename=%s bytes=%s content_type=%s",
+        "story.image-ai | received image filename=%s image_bytes=%s content_type=%s",
         file.filename,
         len(content),
         file.content_type,
     )
     uploaded_image = UploadedImage(filename=file.filename or "", content=content)
     objects = analyzer.analyze(uploaded_image)
-    logging.info("analyze-image | detected objects=%s", objects)
+    logging.info("story.image-ai | detected objects=%s", objects)
     return AnalyzeImageResponse(objects=objects)

@@ -65,10 +65,12 @@ class AftercareWorkflow:
         """Create the initial graph state and run the workflow."""
 
         logging.info(
-            "workflow | started customer_email=%s image=%s bytes=%s",
+            "story.workflow | started customer_email=%s description=%r image_filename=%s image_bytes=%s image_content_type=%s",
             customer_email,
+            description,
             image_filename,
             len(image_bytes),
+            image_content_type,
         )
         final_state = await self.graph.ainvoke(
             {
@@ -83,11 +85,16 @@ class AftercareWorkflow:
             }
         )
         logging.info(
-            "workflow | finished ticket_id=%s status=%s steps=%s trace=%s",
+            "story.workflow | finished ticket_id=%s status=%s steps=%s trace=%s final_state=%s",
             final_state.get("ticket_id"),
             final_state.get("status"),
             final_state.get("workflow_step_count"),
             final_state.get("workflow_trace"),
+            {
+                key: value
+                for key, value in final_state.items()
+                if key != "image_bytes"
+            },
         )
         return final_state
 

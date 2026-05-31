@@ -13,6 +13,13 @@ class PromptBuilder:
     def build_messages(self, request: ChatRequest, rag_context: str) -> list[dict[str, str]]:
         """Create system, history, and user messages for Ollama."""
 
+        logging.info(
+            "story.chat-model | building messages user_message=%r use_rag=%s rag_context=%r history=%s",
+            request.message,
+            request.use_rag,
+            rag_context,
+            [{"role": item.role, "content": item.content} for item in request.history],
+        )
         messages = [
             {
                 "role": "system",
@@ -40,6 +47,7 @@ class PromptBuilder:
             messages.append({"role": item.role, "content": item.content})
 
         messages.append({"role": "user", "content": request.message})
+        logging.info("story.chat-model | built Ollama messages=%s", messages)
         return messages
 
 
@@ -55,10 +63,11 @@ class OllamaChatService:
         rag_result = rag_service.retrieve_context(request)
         messages = self.prompt_builder.build_messages(request, rag_result.context)
         logging.info(
-            "model | calling Ollama model=%s used_rag=%s message_count=%s",
+            "story.chat-model | sending request to Ollama model=%s used_rag=%s message_count=%s sources=%s",
             settings.model_name,
             bool(rag_result.context),
             len(messages),
+            rag_result.sources,
         )
 
         model_request = {
@@ -72,6 +81,7 @@ class OllamaChatService:
             },
             "messages": messages,
         }
+        logging.info("story.chat-model | Ollama request payload=%s", model_request)
 
         try:
             async with httpx.AsyncClient(timeout=settings.request_timeout_seconds) as client:
@@ -87,7 +97,7 @@ class OllamaChatService:
         if not reply:
             reply = "The local model returned an empty response. Try a shorter message."
 
-        logging.info("model | received reply characters=%s", len(reply))
+        logging.info("story.chat-model | Ollama replied raw_response=%s reply=%r", data, reply)
         return ChatResponse(
             reply=reply,
             model=settings.model_name,

@@ -52,16 +52,27 @@ class ModelPlannerAgent:
         if not has_image and not has_text:
             raise ValueError("Request must include an image, text description, or both.")
 
+        logging.info(
+            "story.planner | start model planning has_image=%s has_text=%s description=%r image_filename=%s image_bytes=%s image_content_type=%s",
+            has_image,
+            has_text,
+            description,
+            state.get("image_filename", ""),
+            len(state.get("image_bytes", b"")),
+            state.get("image_content_type", ""),
+        )
         plan = await self.request_model_plan(
             description=description,
             has_image=has_image,
             has_text=has_text,
         )
         logging.info(
-            "agent.model_planner | proposed plan intent=%s steps=%s reason=%r",
+            "story.planner | model plan normalized intent=%s plan_id=%s steps=%s reason=%r full_plan=%s",
             plan.get("intent"),
+            plan.get("plan_id"),
             [step.get("agent") for step in plan.get("steps", []) if isinstance(step, dict)],
             plan.get("reason", ""),
+            json.dumps(plan),
         )
         return {
             **state,
@@ -76,6 +87,11 @@ class ModelPlannerAgent:
         """Ask Ollama to choose a workflow plan, then normalize it."""
 
         selected_plan_id = "image_ticket" if has_image else "text_ticket"
+        logging.info(
+            "story.planner | selected expected plan id before model call selected_plan_id=%s description=%r",
+            selected_plan_id,
+            description,
+        )
 
         messages = [
             {
@@ -119,6 +135,12 @@ class ModelPlannerAgent:
             },
             "messages": messages,
         }
+        logging.info(
+            "story.planner | sending request to Ollama url=%s model=%s payload=%s",
+            f"{settings.model_base_url}/api/chat",
+            settings.model_name,
+            json.dumps(model_request),
+        )
 
         try:
             async with httpx.AsyncClient(timeout=settings.request_timeout_seconds) as client:
@@ -130,6 +152,7 @@ class ModelPlannerAgent:
             raise RuntimeError(f"Planner model is unavailable: {exc}") from exc
 
         content = response.json().get("message", {}).get("content", "")
+        logging.info("story.planner | Ollama replied with raw plan content=%r", content)
         return self.parse_plan_json(content, has_image=has_image)
 
     def parse_plan_json(self, content: str, has_image: bool) -> dict[str, Any]:
@@ -146,6 +169,7 @@ class ModelPlannerAgent:
 
         if not isinstance(parsed, dict):
             raise ValueError("Planner model returned JSON that is not an object.")
+        logging.info("story.planner | parsed model JSON=%s", json.dumps(parsed))
         return self.normalize_model_plan(parsed, has_image=has_image)
 
     def normalize_model_plan(self, parsed: dict[str, Any], has_image: bool) -> dict[str, Any]:
@@ -153,9 +177,11 @@ class ModelPlannerAgent:
 
         nested_plan = parsed.get("selected_plan_to_return")
         if isinstance(nested_plan, dict):
+            logging.info("story.planner | model returned nested selected_plan_to_return=%s", json.dumps(nested_plan))
             parsed = nested_plan
 
         if isinstance(parsed.get("steps"), list):
+            logging.info("story.planner | model returned executable steps directly=%s", json.dumps(parsed))
             return parsed
 
         plan_id = parsed.get("plan_id") or parsed.get("selected_plan_id_to_return")
@@ -169,7 +195,9 @@ class ModelPlannerAgent:
         if plan_id != expected_plan_id:
             raise ValueError(f"Planner model selected {plan_id}, expected {expected_plan_id}.")
 
-        return self.canonical_plan(plan_id=plan_id, reason=str(parsed.get("reason", "")))
+        canonical = self.canonical_plan(plan_id=plan_id, reason=str(parsed.get("reason", "")))
+        logging.info("story.planner | expanded plan_id=%s to canonical_plan=%s", plan_id, json.dumps(canonical))
+        return canonical
 
     def canonical_plan(self, plan_id: str, reason: str) -> dict[str, Any]:
         """Return the exact executable plan template for an approved plan id."""
@@ -211,6 +239,7 @@ class PlanValidatorAgent:
             )
 
         plan = state.get("model_plan", {})
+        logging.info("story.validator | validating model plan=%s", json.dumps(plan) if isinstance(plan, dict) else plan)
         steps = plan.get("steps") if isinstance(plan, dict) else None
         if not isinstance(steps, list) or not steps:
             raise ValueError("Planner model returned a plan with no steps.")
@@ -245,12 +274,13 @@ class PlanValidatorAgent:
 
         route = "image_intake" if required_first_agent == "image_customer_service" else "text_intake"
         logging.info(
-            "agent.plan_validator | approved route=%s steps=%s tools=%s route_count=%s/%s",
+            "story.validator | approved route=%s steps=%s tools=%s route_count=%s/%s reason=%r",
             route,
             planned_steps,
             planned_tools,
             route_count,
             settings.max_supervisor_routes,
+            plan.get("reason", "") if isinstance(plan, dict) else "",
         )
         return {
             **state,
@@ -272,22 +302,32 @@ class CustomerServiceAgent:
 
     async def __call__(self, state: AftercareState) -> AftercareState:
         state = advance_workflow_step(state, "image_customer_service")
-        logging.info("agent.customer_service | analyzing uploaded image")
+        logging.info(
+            "story.image_customer_service | start image intake email=%s description=%r image_filename=%s image_bytes=%s image_content_type=%s",
+            state["customer_email"],
+            state.get("description", ""),
+            state.get("image_filename", ""),
+            len(state.get("image_bytes", b"")),
+            state.get("image_content_type", ""),
+        )
         detected_objects = await self.mcp_client.analyze_image(
             state["image_filename"],
             state["image_bytes"],
             state.get("image_content_type"),
         )
+        logging.info("story.image_customer_service | image analyzer returned detected_objects=%s", detected_objects)
         ticket = await self.mcp_client.create_ticket(
             customer_email=state["customer_email"],
             description=state.get("description", ""),
             detected_objects=detected_objects,
         )
         logging.info(
-            "agent.customer_service | ticket created ticket_id=%s detected=%s error_code=%s",
+            "story.image_customer_service | ticket created ticket_id=%s status=%s detected=%s error_code=%s description=%r",
             ticket["id"],
+            ticket.get("status"),
             detected_objects,
             ticket.get("detected_error_code"),
+            ticket.get("description", ""),
         )
         return {
             **state,
@@ -311,7 +351,9 @@ class TextCustomerServiceAgent:
         description = state.get("description", "")
         detected_objects = self.detect_text_objects(description)
         logging.info(
-            "agent.text_customer_service | creating ticket from text detected=%s",
+            "story.text_customer_service | start text intake email=%s description=%r detected_objects=%s",
+            state["customer_email"],
+            description,
             detected_objects,
         )
         ticket = await self.mcp_client.create_ticket(
@@ -320,9 +362,11 @@ class TextCustomerServiceAgent:
             detected_objects=detected_objects,
         )
         logging.info(
-            "agent.text_customer_service | ticket created ticket_id=%s error_code=%s",
+            "story.text_customer_service | ticket created ticket_id=%s status=%s error_code=%s description=%r",
             ticket["id"],
+            ticket.get("status"),
             ticket.get("detected_error_code"),
+            ticket.get("description", ""),
         )
         return {
             **state,
@@ -359,15 +403,22 @@ class TechnicalAssistantAgent:
         state = advance_workflow_step(state, "technical_assistant")
         issue_terms = ", ".join(state.get("detected_objects", []))
         logging.info(
-            "agent.technical_assistant | retrieving manual steps ticket_id=%s issue_terms=%r",
+            "story.technical_assistant | start technical lookup ticket_id=%s issue_terms=%r customer_description=%r",
             state["ticket_id"],
             issue_terms,
+            state.get("description", ""),
         )
         question = (
             f"Provide after-purchase troubleshooting steps for {issue_terms}. "
             f"Customer description: {state.get('description', '')}"
         )
+        logging.info("story.technical_assistant | sending RAG question=%r", question)
         rag_result = rag_service.retrieve_for_question(question)
+        logging.info(
+            "story.technical_assistant | RAG returned sources=%s context=%r",
+            rag_result.sources,
+            rag_result.context,
+        )
 
         if rag_result.context:
             technical_steps = (
@@ -382,9 +433,10 @@ class TechnicalAssistantAgent:
 
         await self.mcp_client.update_technical_steps(state["ticket_id"], technical_steps)
         logging.info(
-            "agent.technical_assistant | stored technical steps ticket_id=%s context_found=%s",
+            "story.technical_assistant | stored technical steps ticket_id=%s context_found=%s technical_steps=%r",
             state["ticket_id"],
             bool(rag_result.context),
+            technical_steps,
         )
         return {**state, "technical_steps": technical_steps, "status": "technical_steps_added"}
 
@@ -407,7 +459,12 @@ class ReplyAgent:
 
     async def __call__(self, state: AftercareState) -> AftercareState:
         state = advance_workflow_step(state, "reply_agent")
-        logging.info("agent.reply | preparing email ticket_id=%s", state["ticket_id"])
+        logging.info(
+            "story.reply_agent | preparing customer email ticket_id=%s to=%s technical_steps=%r",
+            state["ticket_id"],
+            state["customer_email"],
+            state.get("technical_steps", ""),
+        )
         subject = f"Support ticket #{state['ticket_id']} troubleshooting steps"
         body = (
             f"Hello,\n\n"
@@ -423,8 +480,11 @@ class ReplyAgent:
             body=body,
         )
         logging.info(
-            "agent.reply | email result ticket_id=%s email_sent=%s",
+            "story.reply_agent | email result ticket_id=%s to=%s subject=%r body=%r email_sent=%s",
             state["ticket_id"],
+            state["customer_email"],
+            subject,
+            body,
             email_sent,
         )
         return {
