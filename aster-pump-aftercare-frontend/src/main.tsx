@@ -54,15 +54,17 @@ function App() {
 
   async function submitTicket(event: React.FormEvent) {
     event.preventDefault();
-    if (!photo) {
-      setError("Please choose an error photo. For PoC, a text file named asterpump-e-77.txt also works.");
+    if (!photo && !description.trim()) {
+      setError("Please add an error photo, a text description, or both.");
       return;
     }
 
     const formData = new FormData();
     formData.append("customer_email", email);
     formData.append("description", description);
-    formData.append("photo", photo);
+    if (photo) {
+      formData.append("photo", photo);
+    }
 
     setLoading(true);
     setError(null);
@@ -236,10 +238,9 @@ function App() {
                   onChange={(event) => setPhoto(event.target.files?.[0] ?? null)}
                   type="file"
                   accept="image/*,.txt"
-                  required
                 />
               </span>
-              <small>PoC tip: upload a file named <strong>asterpump-e-77.txt</strong> or an image with that name.</small>
+              <small>Optional. Upload a screen image, or describe the issue in text below.</small>
             </label>
 
             <label>

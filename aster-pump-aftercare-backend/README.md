@@ -3,7 +3,7 @@
 FastAPI + LangGraph orchestration backend for the Aster Pump aftercare service.
 
 This backend is the main application brain. It receives requests from the React
-frontend, runs the LangGraph agent workflow, retrieves manual content through
+frontend, runs the LangGraph supervisor workflow, retrieves manual content through
 RAG, calls the local Ollama model for chat, and uses the MCP server for external
 tools such as image analysis, database tickets, and email.
 
@@ -21,16 +21,21 @@ The backend is split by domain package:
 
 Each package has its own `README.md` with beginner-friendly code explanations.
 
-## Agent Flow
+## Supervisor Agent Flow
 
-1. Frontend uploads customer email, description, and error photo.
+1. Frontend submits customer email plus image, text, or both.
 2. API route calls `aftercare_workflow.run(...)`.
-3. Customer Service Agent calls MCP `analyze_image`.
-4. Customer Service Agent calls MCP `create_ticket`.
-5. Technical Assistant Agent searches RAG/Qdrant for manual steps.
-6. Technical Assistant Agent calls MCP `update_technical_steps`.
-7. Reply Agent calls MCP `send_customer_email`.
-8. API returns the completed ticket result to the frontend.
+3. Supervisor Agent decides the route:
+   `image_intake` when an image exists, otherwise `text_intake`.
+4. Image Customer Service Agent calls MCP `analyze_image` when image input is
+   present.
+5. Text Customer Service Agent skips image analysis and extracts simple text
+   signals when only text is present.
+6. The selected customer-service agent calls MCP `create_ticket`.
+7. Technical Assistant Agent searches RAG/Qdrant for manual steps.
+8. Technical Assistant Agent calls MCP `update_technical_steps`.
+9. Reply Agent calls MCP `send_customer_email`.
+10. API returns the completed ticket result to the frontend.
 
 ## RAG Flow
 
@@ -78,7 +83,7 @@ tools, and model chat.
 | `app/api/application.py` | App factory, CORS setup, startup indexing. |
 | `app/api/routes.py` | Public HTTP API routes. |
 | `app/agents/workflow.py` | LangGraph workflow wiring. |
-| `app/agents/nodes.py` | Customer Service, Technical Assistant, and Reply agents. |
+| `app/agents/nodes.py` | Supervisor, customer-service, technical-assistant, and reply agents. |
 | `app/rag/service.py` | Coordinates RAG indexing and retrieval. |
 | `app/mcp/client.py` | Official MCP client wrapper. |
 | `app/model/chat_client.py` | Ollama chat service. |

@@ -2,13 +2,19 @@ import logging
 
 from langgraph.graph import END, StateGraph
 
-from app.agents.nodes import CustomerServiceAgent, ReplyAgent, TechnicalAssistantAgent
+from app.agents.nodes import (
+    CustomerServiceAgent,
+    ReplyAgent,
+    SupervisorAgent,
+    TechnicalAssistantAgent,
+    TextCustomerServiceAgent,
+)
 from app.agents.state import AftercareState
 from app.mcp.client import AftercareMcpClient
 
 
 class AftercareWorkflow:
-    """Builds and runs the three-agent LangGraph workflow."""
+    """Builds and runs the supervisor-routed LangGraph workflow."""
 
     def __init__(self, mcp_client: AftercareMcpClient | None = None) -> None:
         self.mcp_client = mcp_client or AftercareMcpClient()
@@ -18,24 +24,40 @@ class AftercareWorkflow:
         """Wire the agent nodes in the order required by the business flow."""
 
         graph = StateGraph(AftercareState)
-        graph.add_node("customer_service", CustomerServiceAgent(self.mcp_client))
+        graph.add_node("supervisor", SupervisorAgent())
+        graph.add_node("image_customer_service", CustomerServiceAgent(self.mcp_client))
+        graph.add_node("text_customer_service", TextCustomerServiceAgent(self.mcp_client))
         graph.add_node("technical_assistant", TechnicalAssistantAgent(self.mcp_client))
         graph.add_node("reply_agent", ReplyAgent(self.mcp_client))
 
-        graph.set_entry_point("customer_service")
-        graph.add_edge("customer_service", "technical_assistant")
+        graph.set_entry_point("supervisor")
+        graph.add_conditional_edges(
+            "supervisor",
+            self.route_after_supervisor,
+            {
+                "image_intake": "image_customer_service",
+                "text_intake": "text_customer_service",
+            },
+        )
+        graph.add_edge("image_customer_service", "technical_assistant")
+        graph.add_edge("text_customer_service", "technical_assistant")
         graph.add_edge("technical_assistant", "reply_agent")
         graph.add_edge("reply_agent", END)
 
         return graph.compile()
 
+    def route_after_supervisor(self, state: AftercareState) -> str:
+        """Return the next node key selected by the supervisor."""
+
+        return state["intake_route"]
+
     async def run(
         self,
         customer_email: str,
         description: str,
-        image_filename: str,
-        image_content_type: str,
-        image_bytes: bytes,
+        image_filename: str = "",
+        image_content_type: str = "application/octet-stream",
+        image_bytes: bytes = b"",
     ) -> AftercareState:
         """Create the initial graph state and run the workflow."""
 

@@ -19,7 +19,7 @@ yarn-error.log*
 pnpm-debug.log*
 
 # Python
-__pycache__/
+**__pycache__**
 *.py[cod]
 *$py.class
 .pytest_cache/

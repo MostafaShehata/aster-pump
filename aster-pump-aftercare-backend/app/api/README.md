@@ -100,7 +100,7 @@ Code:
 async def create_support_ticket(
     customer_email: str = Form(...),
     description: str = Form(""),
-    photo: UploadFile = File(...),
+    photo: UploadFile | None = File(None),
 ) -> TicketResponse:
 ```
 
@@ -108,7 +108,8 @@ Explanation:
 
 - This endpoint receives the support form from the React app.
 - `Form(...)` means the value comes from multipart form data.
-- `File(...)` means the uploaded photo comes from multipart form data.
+- `File(None)` means the uploaded photo is optional.
+- The request is valid when it has an image, text description, or both.
 - `response_model=TicketResponse` tells FastAPI what JSON shape to return.
 
 ## Calling The LangGraph Workflow
@@ -119,8 +120,8 @@ Code:
 final_state = await aftercare_workflow.run(
     customer_email=customer_email,
     description=description,
-    image_filename=photo.filename or "uploaded-photo",
-    image_content_type=photo.content_type or "application/octet-stream",
+    image_filename=(photo.filename if photo is not None else "") or "uploaded-photo",
+    image_content_type=(photo.content_type if photo is not None else None) or "application/octet-stream",
     image_bytes=image_bytes,
 )
 ```
@@ -129,8 +130,9 @@ Explanation:
 
 - The API does not create tickets directly.
 - It calls the LangGraph workflow.
-- The workflow runs the Customer Service Agent, Technical Assistant Agent, and
-  Reply Agent.
+- The workflow starts with the Supervisor Agent.
+- The supervisor routes to image intake or text intake.
+- Both intake paths continue to the Technical Assistant Agent and Reply Agent.
 - `final_state` is the final shared state after all agents finish.
 
 ## Mapping Internal State To API Response
@@ -156,4 +158,3 @@ Explanation:
 - The graph state is a Python dictionary.
 - The API response is a Pydantic model.
 - This code converts internal workflow data into stable frontend JSON.
-

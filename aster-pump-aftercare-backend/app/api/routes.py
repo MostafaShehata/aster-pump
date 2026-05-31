@@ -47,28 +47,34 @@ async def chat(request: ChatRequest) -> ChatResponse:
 async def create_support_ticket(
     customer_email: str = Form(...),
     description: str = Form(""),
-    photo: UploadFile = File(...),
+    photo: UploadFile | None = File(None),
 ) -> TicketResponse:
-    """Start the after-purchase LangGraph workflow from a customer photo."""
+    """Start the after-purchase LangGraph workflow from image, text, or both."""
 
-    image_bytes = await photo.read()
-    if not image_bytes:
+    image_bytes = await photo.read() if photo is not None else b""
+    description = description.strip()
+    if photo is not None and not image_bytes:
         raise HTTPException(status_code=400, detail="Photo file is empty.")
+    if not image_bytes and not description:
+        raise HTTPException(status_code=400, detail="Provide an error photo, a text description, or both.")
 
     logging.info(
         "ticket | received support request email=%s filename=%s bytes=%s description_present=%s",
         customer_email,
-        photo.filename,
+        photo.filename if photo is not None else "",
         len(image_bytes),
-        bool(description.strip()),
+        bool(description),
     )
-    final_state = await aftercare_workflow.run(
-        customer_email=customer_email,
-        description=description,
-        image_filename=photo.filename or "uploaded-photo",
-        image_content_type=photo.content_type or "application/octet-stream",
-        image_bytes=image_bytes,
-    )
+    try:
+        final_state = await aftercare_workflow.run(
+            customer_email=customer_email,
+            description=description,
+            image_filename=(photo.filename if photo is not None else "") or "uploaded-photo",
+            image_content_type=(photo.content_type if photo is not None else None) or "application/octet-stream",
+            image_bytes=image_bytes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     logging.info(
         "ticket | completed ticket_id=%s status=%s error_code=%s email_sent=%s",

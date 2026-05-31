@@ -5,7 +5,7 @@ React user interface for the Aster Pump Aftercare PoC.
 This app is the customer-facing screen. It lets the user:
 
 - enter customer email
-- upload an error photo
+- upload an error photo, type a text description, or provide both
 - start a support ticket
 - see a simple virtual-agent message
 - check the latest ticket status
@@ -58,6 +58,7 @@ const [useRag, setUseRag] = useState(true);
 Explanation:
 
 - `email`, `description`, and `photo` hold the form inputs.
+- The ticket form allows image-only, text-only, or image-plus-text requests.
 - `ticket` stores the response after creating a new ticket.
 - `status` stores the response when checking latest ticket status.
 - `chatQuestion` stores the current assistant question.
@@ -71,14 +72,18 @@ Explanation:
 const formData = new FormData();
 formData.append("customer_email", email);
 formData.append("description", description);
-formData.append("photo", photo);
+if (photo) {
+  formData.append("photo", photo);
+}
 ```
 
 Explanation:
 
-- Image upload requires `FormData`.
+- Optional image upload requires `FormData`.
 - Field names must match the backend endpoint:
   `customer_email`, `description`, and `photo`.
+- The backend supervisor decides whether to use image analysis based on whether
+  `photo` exists.
 
 ```tsx
 const response = await fetch("/api/support/tickets", {

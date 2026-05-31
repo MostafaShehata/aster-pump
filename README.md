@@ -21,12 +21,14 @@ Aster Pump Aftercare is a fictional after-purchase support desk for the
 
 ### Use Case 1: Open A Support Ticket
 
-A customer has a visible error on the pump display. Instead of writing a long
-support request, the customer uploads a photo and enters an email address.
+A customer has a visible error on the pump display or a written description of
+the issue. The customer enters an email address and can provide an image, text,
+or both.
 
 Business outcome:
 
-- the system detects visible product/error information from the image
+- the supervisor agent decides whether image analysis is needed
+- the system detects product/error information from the image, text, or both
 - a support ticket is created in the database
 - technical troubleshooting steps are selected from the product manual
 - a reply is prepared and marked as sent by the email tool
@@ -39,19 +41,27 @@ sequenceDiagram
     participant User as Customer
     participant UI as React UI + Nginx
     participant API as FastAPI Backend
-    participant Graph as LangGraph Agents
+    participant Supervisor as Supervisor Agent
+    participant Graph as Worker Agents
     participant MCP as MCP Server
     participant IMG as Image AI Service
     participant DB as PostgreSQL
     participant RAG as Qdrant RAG
     participant Mail as Simulated Email
 
-    User->>UI: Upload error photo and email
+    User->>UI: Enter email plus image, text, or both
     UI->>API: POST /api/support/tickets
-    API->>Graph: Start aftercare workflow
-    Graph->>MCP: analyze_image tool
-    MCP->>IMG: Send uploaded image
-    IMG-->>MCP: Return labels, for example E-77
+    API->>Supervisor: Start dynamic LangGraph workflow
+    Supervisor->>Supervisor: Decide image_intake or text_intake
+    alt Image is present
+        Supervisor->>Graph: Route to image customer-service agent
+        Graph->>MCP: analyze_image tool
+        MCP->>IMG: Send uploaded image
+        IMG-->>MCP: Return labels, for example E-77
+    else Text only
+        Supervisor->>Graph: Route to text customer-service agent
+        Graph->>Graph: Extract simple text labels, for example E-77
+    end
     Graph->>MCP: create_ticket tool
     MCP->>DB: Insert support ticket
     Graph->>RAG: Retrieve manual steps for detected issue
@@ -63,9 +73,14 @@ sequenceDiagram
     API-->>UI: Return ticket result
 ```
 
-The backend uses three LangGraph agents for this journey:
+The backend uses a supervisor plus worker agents for this journey:
 
-- Customer Service Agent: analyzes the image through MCP and opens the ticket.
+- Supervisor Agent: chooses the next agent based on whether the request has an
+  image, text, or both.
+- Image Customer Service Agent: analyzes the image through MCP and opens the
+  ticket.
+- Text Customer Service Agent: skips image analysis, extracts simple text
+  signals, and opens the ticket.
 - Technical Assistant Agent: searches the manual through RAG and writes steps.
 - Reply Agent: prepares the customer response and calls the email tool.
 
@@ -181,7 +196,7 @@ If **Use Aster manual** is unchecked, the runtime path skips `RagService`,
 ```mermaid
 flowchart LR
     User["User Browser"] --> Frontend["Frontend\nReact + Nginx\nlocalhost:8080"]
-    Frontend --> Backend["Backend\nFastAPI + LangGraph\nlocalhost:8000"]
+    Frontend --> Backend["Backend\nFastAPI + LangGraph Supervisor\nlocalhost:8000"]
     Backend --> Model["Model\nOllama qwen3:1.7b\nlocalhost:11434"]
     Backend --> VectorDB["Vector DB\nQdrant\nlocalhost:6333"]
     Backend --> MCP["MCP Server\nOfficial MCP HTTP\nlocalhost:8200"]
@@ -265,7 +280,7 @@ Useful UI tests:
 
 - With **Use Aster manual** checked, ask `What is Bluefin mode?`
 - With **Use Aster manual** unchecked, ask `Where is Egypt?`
-- Upload `asterpump_x17_e77_screen.png` to test the ticket workflow.
+- Upload `asterpump_x17_e77_screen.png`, enter text such as `The display shows E-77`, or provide both to test dynamic ticket routing.
 
 ## Daily Start And Stop
 

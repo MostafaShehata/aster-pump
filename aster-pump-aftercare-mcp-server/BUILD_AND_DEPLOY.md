@@ -49,6 +49,10 @@ curl.exe -X POST http://localhost:8080/api/support/tickets `
   -F "photo=@C:\ai-workspace\lama-local-llm\aster-pump\aster-pump-aftercare-backend\docs\assets\test-images\asterpump_x17_e77_screen.png"
 ```
 
+The supervisor only calls MCP `analyze_image` when the request includes a
+photo. Text-only tickets still call MCP for ticket creation, technical-step
+storage, and simulated email.
+
 Expected:
 
 - ticket is created

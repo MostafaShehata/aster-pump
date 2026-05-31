@@ -76,6 +76,14 @@ curl.exe -X POST http://localhost:8000/api/support/tickets `
   -F "photo=@C:\ai-workspace\lama-local-llm\aster-pump\aster-pump-aftercare-backend\docs\assets\test-images\asterpump_x17_e77_screen.png"
 ```
 
+Text-only supervisor route:
+
+```powershell
+curl.exe -X POST http://localhost:8000/api/support/tickets `
+  -F "customer_email=backend-text-test@example.com" `
+  -F "description=The display shows E-77 on my AsterPump X17"
+```
+
 Expected:
 
 - `status` is `completed`

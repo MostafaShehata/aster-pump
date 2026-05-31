@@ -11,7 +11,7 @@ jump into the component files when you need component-specific details.
 ```mermaid
 flowchart LR
     User["User Browser"] --> Frontend["Frontend\nReact + Nginx\nlocalhost:8080"]
-    Frontend --> Backend["Backend\nFastAPI + LangGraph\nlocalhost:8000"]
+    Frontend --> Backend["Backend\nFastAPI + LangGraph Supervisor\nlocalhost:8000"]
     Backend --> Model["Model\nOllama qwen3:1.7b\nlocalhost:11434"]
     Backend --> VectorDB["Vector DB\nQdrant\nlocalhost:6333"]
     Backend --> MCP["MCP Server\nOfficial MCP HTTP\nlocalhost:8200"]
@@ -309,10 +309,28 @@ Expected answer should say that Egypt is in North Africa.
 
 Why this matters:
 
-- It proves the app is not only an image-upload support flow.
+- It proves the app is not only a support-ticket flow.
 - The same chat endpoint can answer general questions when RAG is disabled.
 
 ## Step 8: Verify Full Agent Flow
+
+Text-only dynamic routing:
+
+```powershell
+curl.exe -X POST http://localhost:8080/api/support/tickets `
+  -F "customer_email=deployment-text-test@example.com" `
+  -F "description=The display shows E-77 on my AsterPump X17"
+```
+
+Expected:
+
+- supervisor routes to `text_intake`
+- image analyzer is skipped
+- ticket ID is returned
+- detected error code is `E-77`
+- email is marked sent
+
+Image-plus-text dynamic routing:
 
 ```powershell
 curl.exe -X POST http://localhost:8080/api/support/tickets `
@@ -323,6 +341,7 @@ curl.exe -X POST http://localhost:8080/api/support/tickets `
 
 Expected:
 
+- supervisor routes to `image_intake`
 - ticket ID is returned
 - status is `completed`
 - detected error code is `E-77`
@@ -332,9 +351,9 @@ What this tests:
 
 1. Frontend Nginx proxy
 2. Backend FastAPI endpoint
-3. LangGraph workflow
+3. LangGraph supervisor route
 4. MCP tool calls
-5. Image AI service
+5. Image AI service when an image is present
 6. PostgreSQL insert/update
 7. Qdrant RAG retrieval
 8. Simulated email tool

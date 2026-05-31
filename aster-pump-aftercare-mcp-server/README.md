@@ -114,7 +114,9 @@ def create_ticket(
 Explanation:
 
 - Exposes ticket creation as an MCP tool.
-- The backend agent calls this after image analysis.
+- The backend agent calls this after supervisor intake.
+- Image intake sends image-analysis labels.
+- Text intake sends labels extracted from the text request.
 
 ```python
 return ticket_repository.create_ticket(
@@ -165,4 +167,3 @@ See:
 ```text
 BUILD_AND_DEPLOY.md
 ```
-
