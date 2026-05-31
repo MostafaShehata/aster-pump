@@ -1,9 +1,10 @@
 # Aster Pump Aftercare Backend
 
-FastAPI + LangGraph orchestration backend for the Aster Pump aftercare service.
+FastAPI + model-planned LangGraph orchestration backend for the Aster Pump
+aftercare service.
 
 This backend is the main application brain. It receives requests from the React
-frontend, runs the LangGraph supervisor workflow, retrieves manual content through
+frontend, runs the model-planned LangGraph workflow, retrieves manual content through
 RAG, calls the local Ollama model for chat, and uses the MCP server for external
 tools such as image analysis, database tickets, and email.
 
@@ -21,21 +22,63 @@ The backend is split by domain package:
 
 Each package has its own `README.md` with beginner-friendly code explanations.
 
-## Supervisor Agent Flow
+## Model-Planned Agent Flow
 
 1. Frontend submits customer email plus image, text, or both.
 2. API route calls `aftercare_workflow.run(...)`.
-3. Supervisor Agent decides the route:
+3. Model Planner Agent asks Ollama to choose an approved JSON `plan_id`.
+4. Backend expands the plan id into canonical agents and tools.
+5. Plan Validator Agent validates agents, tools, order, request inputs, and max
+   step limits.
+6. Validated plan chooses the route:
    `image_intake` when an image exists, otherwise `text_intake`.
-4. Image Customer Service Agent calls MCP `analyze_image` when image input is
+7. Image Customer Service Agent calls MCP `analyze_image` when image input is
    present.
-5. Text Customer Service Agent skips image analysis and extracts simple text
+8. Text Customer Service Agent skips image analysis and extracts simple text
    signals when only text is present.
-6. The selected customer-service agent calls MCP `create_ticket`.
-7. Technical Assistant Agent searches RAG/Qdrant for manual steps.
-8. Technical Assistant Agent calls MCP `update_technical_steps`.
-9. Reply Agent calls MCP `send_customer_email`.
-10. API returns the completed ticket result to the frontend.
+9. The selected customer-service agent calls MCP `create_ticket`.
+10. Technical Assistant Agent searches RAG/Qdrant for manual steps.
+11. Technical Assistant Agent calls MCP `update_technical_steps`.
+12. Reply Agent calls MCP `send_customer_email`.
+13. API returns the completed ticket result to the frontend.
+
+Safety checks:
+
+- `MAX_WORKFLOW_STEPS` defaults to `8` and stops runaway graphs.
+- `MAX_SUPERVISOR_ROUTES` defaults to `3` and stops repeated plan routing.
+- Each workflow records a `workflow_trace` in backend logs so the executed agent
+  path is visible.
+
+## Plan Validation
+
+The local model can only choose a plan. It cannot directly execute tools.
+
+For CPU reliability, the tiny model chooses one approved `plan_id`:
+
+- `image_ticket` for requests with an uploaded image
+- `text_ticket` for text-only requests
+
+The backend expands the selected id into the exact agent/tool plan, then
+validates that expanded plan.
+
+Approved agents:
+
+- `image_customer_service`
+- `text_customer_service`
+- `technical_assistant`
+- `reply_agent`
+
+Approved tools:
+
+- `analyze_image`
+- `create_ticket`
+- `rag_search`
+- `update_technical_steps`
+- `send_customer_email`
+
+The backend rejects any plan that invents an agent, invents a tool, uses a tool
+with the wrong agent, starts with the wrong intake agent, or exceeds the maximum
+workflow step count.
 
 ## RAG Flow
 
@@ -83,7 +126,7 @@ tools, and model chat.
 | `app/api/application.py` | App factory, CORS setup, startup indexing. |
 | `app/api/routes.py` | Public HTTP API routes. |
 | `app/agents/workflow.py` | LangGraph workflow wiring. |
-| `app/agents/nodes.py` | Supervisor, customer-service, technical-assistant, and reply agents. |
+| `app/agents/nodes.py` | Model planner, plan validator, customer-service, technical-assistant, and reply agents. |
 | `app/rag/service.py` | Coordinates RAG indexing and retrieval. |
 | `app/mcp/client.py` | Official MCP client wrapper. |
 | `app/model/chat_client.py` | Ollama chat service. |

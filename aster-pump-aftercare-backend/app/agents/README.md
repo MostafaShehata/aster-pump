@@ -1,29 +1,43 @@
 # Agents Package
 
-This package contains the LangGraph supervisor workflow for the aftercare
+This package contains the model-planned LangGraph workflow for the aftercare
 support-ticket journey.
 
-The goal of this package is to decide what work must happen, run the correct
-agents in the correct order, and return one final state to the API layer.
+The design has two levels:
+
+1. The local model decides the plan.
+2. The backend validates and executes the plan.
+
+The model never runs tools directly. It only returns JSON. The backend checks
+that JSON against strict rules before LangGraph executes known, prebuilt nodes.
 
 ## Agent List
 
 | Agent | Runs When | Main Job |
 | --- | --- | --- |
-| `SupervisorAgent` | Always first | Decides whether the request should use image intake or text intake. |
-| `CustomerServiceAgent` | Image exists | Sends image to MCP image tool, receives detected labels, creates ticket. |
-| `TextCustomerServiceAgent` | Text only | Extracts simple text labels, creates ticket without image analysis. |
+| `ModelPlannerAgent` | Always first | Asks Ollama to choose an approved `plan_id`, then expands it to a canonical plan. |
+| `PlanValidatorAgent` | After planner | Rejects unsafe or invalid plans before tools run. |
+| `CustomerServiceAgent` | Approved image plan | Sends image to MCP image tool, receives detected labels, creates ticket. |
+| `TextCustomerServiceAgent` | Approved text plan | Extracts simple text labels, creates ticket without image analysis. |
 | `TechnicalAssistantAgent` | After ticket creation | Uses RAG to find manual troubleshooting steps and stores them on the ticket. |
 | `ReplyAgent` | Last | Builds the customer reply and calls the MCP email tool. |
 
-The important design idea is this:
+## Planning Diagram
 
-```text
-Supervisor chooses the route.
-Worker agents do the task.
-MCP owns external tools.
-RAG owns manual knowledge.
-The API only starts the workflow and maps the final response.
+```mermaid
+flowchart TD
+    User["Request state: image, text, or both"] --> Planner["ModelPlannerAgent"]
+    Planner --> Ollama["Ollama qwen3:1.7b"]
+    Ollama --> Plan["JSON plan_id"]
+    Plan --> Templates["Backend canonical plan templates"]
+    Templates --> Validator["PlanValidatorAgent"]
+    Validator -->|"approved image_intake"| ImageAgent["CustomerServiceAgent"]
+    Validator -->|"approved text_intake"| TextAgent["TextCustomerServiceAgent"]
+    Validator -->|"rejected"| Error["ValueError -> HTTP 400"]
+    ImageAgent --> Technical["TechnicalAssistantAgent"]
+    TextAgent --> Technical
+    Technical --> Reply["ReplyAgent"]
+    Reply --> Done["END"]
 ```
 
 ## Package Files
@@ -31,51 +45,37 @@ The API only starts the workflow and maps the final response.
 | File | Function |
 | --- | --- |
 | `state.py` | Defines the shared state dictionary used by all graph nodes. |
-| `nodes.py` | Contains the supervisor and worker agent classes. |
+| `nodes.py` | Contains the planner, validator, and worker agent classes. |
 | `workflow.py` | Builds the LangGraph graph and defines dynamic routing. |
-
-## What Is LangGraph?
-
-LangGraph is a workflow library for stateful agent systems.
-
-In this project:
-
-- a **node** is one agent class
-- an **edge** tells LangGraph what node can run next
-- a **conditional edge** lets the graph choose the next node from state
-- **state** is a shared dictionary passed from node to node
-- the **compiled graph** is the runnable workflow
-
-This is different from one simple function calling another. LangGraph gives the
-workflow a clear structure:
-
-```text
-supervisor
-  -> image_customer_service OR text_customer_service
-  -> technical_assistant
-  -> reply_agent
-  -> END
-```
 
 ## Shared State
 
 Code from `state.py`:
 
 ```python
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 
 class AftercareState(TypedDict, total=False):
-    """Shared state passed between the supervisor and worker agents."""
+    """Shared state passed between planner, validator, and worker agents."""
 
     customer_email: str
     description: str
     intake_route: Literal["image_intake", "text_intake"]
+    model_plan: dict[str, Any]
+    planned_steps: list[str]
+    planned_tools: list[str]
+    plan_reason: str
+    planner_source: str
+    plan_validation_status: str
     image_filename: str
     image_content_type: str
     image_bytes: bytes
     has_image: bool
     has_text: bool
+    workflow_step_count: int
+    supervisor_route_count: int
+    workflow_trace: list[str]
     detected_objects: list[str]
     detected_error_code: str | None
     ticket_id: int
@@ -88,26 +88,75 @@ class AftercareState(TypedDict, total=False):
 
 Explanation:
 
-- `TypedDict` documents the shape of the graph state.
-- `total=False` means the graph does not require every key at the beginning.
-- The API starts with `customer_email`, optional `description`, and optional
-  image fields.
-- The supervisor adds `intake_route`, `has_image`, and `has_text`.
-- Intake agents add `detected_objects`, `detected_error_code`, `ticket_id`, and
-  first ticket `status`.
-- The technical agent adds `technical_steps`.
-- The reply agent adds `reply_subject`, `reply_body`, `email_sent`, and final
-  `status`.
+- `TypedDict` documents the shared state shape.
+- `total=False` means not all keys exist at workflow start.
+- `model_plan` stores the raw JSON proposed by Ollama.
+- `planned_steps` and `planned_tools` store the validated plan.
+- `workflow_step_count` and `workflow_trace` are safety/debug fields.
+- Worker agents add ticket, RAG, reply, and email fields.
 
-## Supervisor Agent
+## Safety Guard
 
 Code from `nodes.py`:
 
 ```python
-class SupervisorAgent:
-    """Routes the request to the correct intake agent based on available input."""
+def advance_workflow_step(state: AftercareState, node_name: str) -> AftercareState:
+    """Increment workflow step counters and stop runaway graphs."""
 
-    def __call__(self, state: AftercareState) -> AftercareState:
+    step_count = state.get("workflow_step_count", 0) + 1
+    if step_count > settings.max_workflow_steps:
+        raise ValueError(
+            f"Workflow stopped after exceeding max steps "
+            f"({settings.max_workflow_steps}). Trace: {state.get('workflow_trace', [])}"
+        )
+
+    trace = [*state.get("workflow_trace", []), node_name]
+    return {**state, "workflow_step_count": step_count, "workflow_trace": trace}
+```
+
+Explanation:
+
+- Every node calls this helper before it does work.
+- The helper increments the total workflow step counter.
+- It appends the current node name to `workflow_trace`.
+- If future model-planned workflows accidentally loop, execution stops.
+
+Normal trace example:
+
+```text
+["model_planner", "plan_validator", "text_customer_service", "technical_assistant", "reply_agent"]
+```
+
+## Allowed Agents And Tools
+
+Code from `nodes.py`:
+
+```python
+ALLOWED_AGENT_TOOLS = {
+    "image_customer_service": {"analyze_image", "create_ticket"},
+    "text_customer_service": {"create_ticket"},
+    "technical_assistant": {"rag_search", "update_technical_steps"},
+    "reply_agent": {"send_customer_email"},
+}
+```
+
+Explanation:
+
+- This is the backend whitelist.
+- If the model invents `delete_database`, validation rejects it.
+- If the model uses a real tool with the wrong agent, validation rejects it.
+- This keeps the model useful but not in control of security.
+
+## Model Planner Agent
+
+Code from `nodes.py`:
+
+```python
+class ModelPlannerAgent:
+    """Uses the local model to propose a workflow plan as JSON."""
+
+    async def __call__(self, state: AftercareState) -> AftercareState:
+        state = advance_workflow_step(state, "model_planner")
         description = state.get("description", "").strip()
         has_image = bool(state.get("image_bytes"))
         has_text = bool(description)
@@ -115,61 +164,289 @@ class SupervisorAgent:
         if not has_image and not has_text:
             raise ValueError("Request must include an image, text description, or both.")
 
-        route = "image_intake" if has_image else "text_intake"
-        logging.info(
-            "agent.supervisor | routed request route=%s has_image=%s has_text=%s",
-            route,
-            has_image,
-            has_text,
+        plan = await self.request_model_plan(
+            description=description,
+            has_image=has_image,
+            has_text=has_text,
         )
         return {
             **state,
-            "intake_route": route,
+            "model_plan": plan,
+            "planner_source": "ollama",
             "has_image": has_image,
             "has_text": has_text,
-            "status": "routed",
+            "status": "planned",
         }
-```
-
-Line-by-line idea:
-
-- `description = ...strip()` normalizes the text input.
-- `has_image = bool(state.get("image_bytes"))` checks whether a file was
-  uploaded.
-- `has_text = bool(description)` checks whether the user wrote anything useful.
-- The `ValueError` protects the workflow from empty requests.
-- `route = "image_intake" if has_image else "text_intake"` is the routing
-  decision.
-- The returned dictionary keeps the old state with `**state` and adds routing
-  metadata.
-
-The supervisor does not create tickets, call the model, search RAG, or send
-email. It only decides what should happen next.
-
-## Image Customer Service Agent
-
-This agent runs when the request contains an image. It is the image-aware
-intake path.
-
-Code:
-
-```python
-class CustomerServiceAgent:
-    """Analyzes an uploaded image and opens the support ticket."""
-
-    def __init__(self, mcp_client: AftercareMcpClient) -> None:
-        self.mcp_client = mcp_client
 ```
 
 Explanation:
 
-- The agent receives `AftercareMcpClient`.
-- It does not know HTTP details, PostgreSQL details, or Image AI service
-  details.
-- It only knows that MCP exposes a tool named `analyze_image` and a tool named
-  `create_ticket`.
+- The planner checks whether the request has image bytes or text.
+- Empty requests are rejected before calling the model.
+- `request_model_plan(...)` asks Ollama to choose an approved `plan_id`.
+- The selected plan is normalized into a full executable plan and stored in
+  `model_plan`.
+- The planner does not call MCP tools or create tickets.
 
-Code:
+Planner prompt code:
+
+```python
+messages = [
+    {
+        "role": "system",
+        "content": (
+            "You are a workflow planner for an aftercare support system. "
+            "Return JSON only. Do not use markdown. "
+            "Your job is to choose exactly one approved plan_id from the backend catalog. "
+            "Do not invent plan ids, agents, or tools. "
+            "Return only this shape: "
+            "{\"intent\":\"open_ticket\",\"plan_id\":\"image_ticket or text_ticket\",\"reason\":\"short reason\"}."
+        ),
+    },
+    {
+        "role": "user",
+        "content": json.dumps(
+            {
+                "task": "Create a workflow plan for opening one aftercare ticket.",
+                "has_image": has_image,
+                "has_text": has_text,
+                "description": description,
+                "valid_plan_ids": {
+                    "image_ticket": "Use when the request includes an image...",
+                    "text_ticket": "Use when the request has text and no image...",
+                },
+                "selected_plan_id_to_return": selected_plan_id,
+            }
+        ),
+    },
+]
+```
+
+Explanation:
+
+- The system message tells the model to choose a plan id, not to execute tools.
+- The user message sends facts about the current request.
+- `valid_plan_ids` is the approved backend catalog.
+- `selected_plan_id_to_return` makes the tiny local model's job very small.
+- The backend still validates the chosen plan after expansion.
+
+Ollama request code:
+
+```python
+model_request = {
+    "model": settings.model_name,
+    "stream": False,
+    "think": False,
+    "format": "json",
+    "options": {
+        "temperature": 0,
+        "num_predict": 256,
+        "num_ctx": 2048,
+    },
+    "messages": messages,
+}
+```
+
+Explanation:
+
+- `format: "json"` asks Ollama to produce JSON.
+- `temperature: 0` makes planning more stable.
+- `think: False` keeps the tiny local model from returning reasoning text.
+
+Example model output for image-plus-text:
+
+```json
+{
+  "intent": "open_ticket",
+  "plan_id": "image_ticket",
+  "reason": "The request includes an image, so image analysis is needed."
+}
+```
+
+Example model output for text-only:
+
+```json
+{
+  "intent": "open_ticket",
+  "plan_id": "text_ticket",
+  "reason": "The request has text but no image, so text intake is enough."
+}
+```
+
+## Plan Normalization
+
+The tiny CPU model is used for the decision, but the backend owns the executable
+workflow definition. That is why the model can return a short `plan_id`, then
+the backend expands it into exact agents and tools.
+
+Code from `nodes.py`:
+
+```python
+def normalize_model_plan(self, parsed: dict[str, Any], has_image: bool) -> dict[str, Any]:
+    """Convert a model-selected plan id into a canonical backend plan."""
+
+    plan_id = parsed.get("plan_id") or parsed.get("selected_plan_id_to_return")
+    if plan_id not in {"image_ticket", "text_ticket"} and parsed.get("intent") == "open_ticket":
+        plan_id = "image_ticket" if has_image else "text_ticket"
+
+    if plan_id not in {"image_ticket", "text_ticket"}:
+        raise ValueError(f"Planner model returned unsupported plan_id: {plan_id}")
+
+    expected_plan_id = "image_ticket" if has_image else "text_ticket"
+    if plan_id != expected_plan_id:
+        raise ValueError(f"Planner model selected {plan_id}, expected {expected_plan_id}.")
+
+    return self.canonical_plan(plan_id=plan_id, reason=str(parsed.get("reason", "")))
+```
+
+Explanation:
+
+- The model decides between `image_ticket` and `text_ticket`.
+- The backend rejects unknown plan ids.
+- The backend rejects a plan id that conflicts with the request input. For
+  example, an image upload cannot use `text_ticket`.
+- `canonical_plan(...)` returns the exact executable steps used by LangGraph.
+
+Canonical image plan after expansion:
+
+```json
+{
+  "intent": "open_ticket",
+  "reason": "The request includes an image, so image analysis is needed.",
+  "steps": [
+    {
+      "agent": "image_customer_service",
+      "tools": ["analyze_image", "create_ticket"]
+    },
+    {
+      "agent": "technical_assistant",
+      "tools": ["rag_search", "update_technical_steps"]
+    },
+    {
+      "agent": "reply_agent",
+      "tools": ["send_customer_email"]
+    }
+  ]
+}
+```
+
+Canonical text plan after expansion:
+
+```json
+{
+  "intent": "open_ticket",
+  "reason": "The request has text but no image, so text intake is enough.",
+  "steps": [
+    {
+      "agent": "text_customer_service",
+      "tools": ["create_ticket"]
+    },
+    {
+      "agent": "technical_assistant",
+      "tools": ["rag_search", "update_technical_steps"]
+    },
+    {
+      "agent": "reply_agent",
+      "tools": ["send_customer_email"]
+    }
+  ]
+}
+```
+
+## Plan Validator Agent
+
+The validator is the safety boundary between model output and tool execution.
+
+Code from `nodes.py`:
+
+```python
+class PlanValidatorAgent:
+    """Validates the model-generated plan before any worker agent runs."""
+
+    def __call__(self, state: AftercareState) -> AftercareState:
+        state = advance_workflow_step(state, "plan_validator")
+        route_count = state.get("supervisor_route_count", 0) + 1
+        if route_count > settings.max_supervisor_routes:
+            raise ValueError(
+                f"Plan validator stopped after exceeding max route decisions "
+                f"({settings.max_supervisor_routes})."
+            )
+```
+
+Explanation:
+
+- The validator counts route decisions.
+- The old field name `supervisor_route_count` is still used as a generic route
+  decision counter.
+- If a future graph loops back to planning too many times, validation stops it.
+
+Step validation code:
+
+```python
+for step in steps:
+    agent = step.get("agent")
+    tools = step.get("tools", [])
+    if not isinstance(agent, str) or agent not in ALLOWED_AGENT_TOOLS:
+        raise ValueError(f"Planner selected unsupported agent: {agent}")
+    unsupported_tools = set(tools) - ALLOWED_AGENT_TOOLS[agent]
+    if unsupported_tools:
+        raise ValueError(f"Planner selected unsupported tools for {agent}: {sorted(unsupported_tools)}")
+    planned_steps.append(agent)
+    planned_tools.extend(tools)
+```
+
+Explanation:
+
+- Each step must name one allowed agent.
+- Each tool must be allowed for that specific agent.
+- Validated agent names are collected in `planned_steps`.
+- Validated tool names are collected in `planned_tools`.
+
+Order validation code:
+
+```python
+required_first_agent = "image_customer_service" if state.get("has_image") else "text_customer_service"
+required_steps = [required_first_agent, "technical_assistant", "reply_agent"]
+if planned_steps != required_steps:
+    raise ValueError(f"Planner selected invalid step order: {planned_steps}. Expected: {required_steps}")
+```
+
+Explanation:
+
+- If the request has an image, the first worker must be
+  `image_customer_service`.
+- If the request has no image, the first worker must be
+  `text_customer_service`.
+- Every ticket must continue through technical assistance and reply.
+- The model cannot skip email, skip RAG, or run tools out of order.
+
+Approved state code:
+
+```python
+route = "image_intake" if required_first_agent == "image_customer_service" else "text_intake"
+return {
+    **state,
+    "intake_route": route,
+    "supervisor_route_count": route_count,
+    "planned_steps": planned_steps,
+    "planned_tools": planned_tools,
+    "plan_reason": str(plan.get("reason", "")) if isinstance(plan, dict) else "",
+    "plan_validation_status": "approved",
+    "status": "routed",
+}
+```
+
+Explanation:
+
+- `intake_route` is what LangGraph uses for conditional routing.
+- `planned_steps` and `planned_tools` are kept for logging/debugging.
+- Only an approved plan can reach worker agents.
+
+## Worker Agents
+
+### Image Customer Service Agent
+
+Runs when the approved plan starts with `image_customer_service`.
 
 ```python
 detected_objects = await self.mcp_client.analyze_image(
@@ -181,11 +458,9 @@ detected_objects = await self.mcp_client.analyze_image(
 
 Explanation:
 
-- The image bytes are sent to the MCP server.
-- MCP forwards them to the Image AI service.
-- The Image AI service returns labels such as `["AsterPump X17", "E-77"]`.
-
-Code:
+- The agent sends the uploaded image through MCP.
+- MCP calls the Image AI service.
+- The result is a list such as `["AsterPump X17", "E-77"]`.
 
 ```python
 ticket = await self.mcp_client.create_ticket(
@@ -197,99 +472,35 @@ ticket = await self.mcp_client.create_ticket(
 
 Explanation:
 
-- Ticket creation is also done through MCP.
-- The backend agents do not connect to PostgreSQL directly.
-- This keeps database ownership inside the MCP server.
+- The ticket is created through MCP.
+- The backend never writes directly to PostgreSQL.
 
-Code:
+### Text Customer Service Agent
+
+Runs when the approved plan starts with `text_customer_service`.
 
 ```python
-return {
-    **state,
-    "detected_objects": detected_objects,
-    "detected_error_code": ticket.get("detected_error_code"),
-    "ticket_id": ticket["id"],
-    "status": ticket["status"],
-}
+ERROR_PATTERN = re.compile(r"E-?(\d{2,3})(?!\d)", re.IGNORECASE)
 ```
 
 Explanation:
 
-- The agent returns a new state dictionary.
-- The next agent receives the ticket ID and detected issue details.
-
-## Text Customer Service Agent
-
-This agent runs when the request has text but no image. It lets the system open
-tickets without requiring a photo.
-
-Code:
+- This pattern extracts simple error codes such as `E-77`, `E77`, or `e93`.
+- It is intentionally deterministic for the PoC.
 
 ```python
-class TextCustomerServiceAgent:
-    """Creates a ticket from text-only customer input without image analysis."""
-
-    ERROR_PATTERN = re.compile(r"E-?(\d{2,3})(?!\d)", re.IGNORECASE)
+return objects or ["text_request"]
 ```
 
 Explanation:
 
-- The regex finds error codes like `E-77`, `E77`, or `e93`.
-- This is intentionally small and deterministic for the PoC.
-- A production version could replace this with an LLM classifier or OCR/text
-  extraction pipeline.
+- Even if no product/error code is found, the ticket can still be created.
+- The generic `text_request` label tells later agents this was a text-only
+  intake.
 
-Code:
-
-```python
-def detect_text_objects(self, text: str) -> list[str]:
-    """Extract simple product/error labels from a text-only request."""
-
-    objects: list[str] = []
-    normalized = text.lower()
-    if "asterpump" in normalized or "x17" in normalized:
-        objects.append("AsterPump X17")
-
-    for match in self.ERROR_PATTERN.finditer(text):
-        digits = re.sub(r"\D", "", match.group(0))
-        code = f"E-{digits}"
-        if code not in objects:
-            objects.append(code)
-
-    return objects or ["text_request"]
-```
-
-Explanation:
-
-- The method looks for product words first.
-- Then it extracts normalized error codes.
-- `objects or ["text_request"]` guarantees ticket creation still has at least
-  one label even when no code is found.
-
-Code:
+### Technical Assistant Agent
 
 ```python
-ticket = await self.mcp_client.create_ticket(
-    customer_email=state["customer_email"],
-    description=description,
-    detected_objects=detected_objects,
-)
-```
-
-Explanation:
-
-- Text-only and image-based tickets use the same MCP DB tool.
-- After the ticket is created, the workflow joins the same technical-assistant
-  path used by image tickets.
-
-## Technical Assistant Agent
-
-This agent creates troubleshooting steps using the local RAG knowledge base.
-
-Code:
-
-```python
-issue_terms = ", ".join(state.get("detected_objects", []))
 question = (
     f"Provide after-purchase troubleshooting steps for {issue_terms}. "
     f"Customer description: {state.get('description', '')}"
@@ -299,35 +510,8 @@ rag_result = rag_service.retrieve_for_question(question)
 
 Explanation:
 
-- `detected_objects` came from image analysis or text extraction.
-- The agent builds a RAG search question from those objects and the customer
-  description.
-- `rag_service.retrieve_for_question(...)` searches Qdrant for matching manual
-  chunks.
-
-Code:
-
-```python
-if rag_result.context:
-    technical_steps = (
-        "Based on the product manual:\n"
-        f"{self.summarize_context_for_customer(rag_result.context)}"
-    )
-else:
-    technical_steps = (
-        "No matching manual entry was found. Please confirm the displayed error code "
-        "and contact Level 2 support."
-    )
-```
-
-Explanation:
-
-- If RAG finds matching manual text, the agent creates a manual-based answer.
-- If RAG finds nothing, it creates a safe fallback.
-- This PoC uses a deterministic summarizer. A later version could call the LLM
-  to summarize retrieved context.
-
-Code:
+- The agent creates a RAG search query from detected labels and customer text.
+- Qdrant returns matching manual chunks.
 
 ```python
 await self.mcp_client.update_technical_steps(state["ticket_id"], technical_steps)
@@ -335,15 +519,9 @@ await self.mcp_client.update_technical_steps(state["ticket_id"], technical_steps
 
 Explanation:
 
-- The troubleshooting steps are stored on the ticket through MCP.
-- PostgreSQL is still accessed only by the MCP server.
+- The generated troubleshooting steps are stored through MCP.
 
-## Reply Agent
-
-This agent prepares the final customer message and sends it through the MCP
-email tool.
-
-Code:
+### Reply Agent
 
 ```python
 subject = f"Support ticket #{state['ticket_id']} troubleshooting steps"
@@ -358,11 +536,8 @@ body = (
 
 Explanation:
 
-- The email subject includes the ticket number.
-- The body avoids saying "photo" because the request may be text-only.
-- The body includes detected labels and manual-based technical steps.
-
-Code:
+- The reply uses the neutral phrase "request" because the input may be image,
+  text, or both.
 
 ```python
 email_sent = await self.mcp_client.send_customer_email(
@@ -375,39 +550,17 @@ email_sent = await self.mcp_client.send_customer_email(
 
 Explanation:
 
-- The agent calls MCP instead of sending email directly.
-- In this PoC, email is simulated by writing to a log and updating the ticket.
-- In production, the MCP server could call SMTP, SendGrid, Microsoft Graph, or
-  another email provider.
+- Email is sent through MCP.
+- In this PoC, email is simulated and the ticket is marked completed.
 
-## How The Supervisor Creates The Workflow
-
-The supervisor does not literally create the graph at runtime. The graph is
-created once when the backend starts. The supervisor creates the **route** inside
-state, and LangGraph uses that route to choose the next node.
+## LangGraph Workflow Wiring
 
 Code from `workflow.py`:
 
 ```python
-class AftercareWorkflow:
-    """Builds and runs the supervisor-routed LangGraph workflow."""
-
-    def __init__(self, mcp_client: AftercareMcpClient | None = None) -> None:
-        self.mcp_client = mcp_client or AftercareMcpClient()
-        self.graph = self.build_graph()
-```
-
-Explanation:
-
-- `AftercareWorkflow` owns the compiled graph.
-- `mcp_client` is shared by agents that need MCP tools.
-- `self.graph = self.build_graph()` builds the workflow once.
-
-Code:
-
-```python
 graph = StateGraph(AftercareState)
-graph.add_node("supervisor", SupervisorAgent())
+graph.add_node("model_planner", ModelPlannerAgent())
+graph.add_node("plan_validator", PlanValidatorAgent())
 graph.add_node("image_customer_service", CustomerServiceAgent(self.mcp_client))
 graph.add_node("text_customer_service", TextCustomerServiceAgent(self.mcp_client))
 graph.add_node("technical_assistant", TechnicalAssistantAgent(self.mcp_client))
@@ -416,29 +569,24 @@ graph.add_node("reply_agent", ReplyAgent(self.mcp_client))
 
 Explanation:
 
-- `StateGraph(AftercareState)` tells LangGraph the shape of the shared state.
-- `add_node("supervisor", SupervisorAgent())` registers the first node.
-- `image_customer_service` is the image route.
-- `text_customer_service` is the text-only route.
-- `technical_assistant` and `reply_agent` are shared by both routes.
-
-Code:
+- The planner and validator are graph nodes.
+- Worker agents are also graph nodes.
+- All nodes share the same `AftercareState`.
 
 ```python
-graph.set_entry_point("supervisor")
+graph.set_entry_point("model_planner")
+graph.add_edge("model_planner", "plan_validator")
 ```
 
 Explanation:
 
-- Every support-ticket workflow starts at the supervisor.
-- This is what makes the flow dynamic instead of fixed.
-
-Code:
+- The workflow always starts by asking the model for a plan.
+- The raw plan always goes through backend validation before execution.
 
 ```python
 graph.add_conditional_edges(
-    "supervisor",
-    self.route_after_supervisor,
+    "plan_validator",
+    self.route_after_plan_validator,
     {
         "image_intake": "image_customer_service",
         "text_intake": "text_customer_service",
@@ -448,28 +596,21 @@ graph.add_conditional_edges(
 
 Explanation:
 
-- `add_conditional_edges` is the key LangGraph feature here.
-- After `supervisor` runs, LangGraph calls `route_after_supervisor`.
-- The returned value is matched against the mapping.
-- If the route is `image_intake`, LangGraph runs `image_customer_service`.
-- If the route is `text_intake`, LangGraph runs `text_customer_service`.
-
-Code:
+- After validation, LangGraph checks `intake_route`.
+- `image_intake` runs image intake.
+- `text_intake` runs text intake.
 
 ```python
-def route_after_supervisor(self, state: AftercareState) -> str:
-    """Return the next node key selected by the supervisor."""
+def route_after_plan_validator(self, state: AftercareState) -> str:
+    """Return the next node key approved by the plan validator."""
 
     return state["intake_route"]
 ```
 
 Explanation:
 
-- The supervisor already wrote `state["intake_route"]`.
-- This method simply gives that value to LangGraph.
-- The graph mapping decides the actual next node name.
-
-Code:
+- The validator wrote `intake_route`.
+- This function gives that route to LangGraph.
 
 ```python
 graph.add_edge("image_customer_service", "technical_assistant")
@@ -480,102 +621,47 @@ graph.add_edge("reply_agent", END)
 
 Explanation:
 
-- Both intake paths join at `technical_assistant`.
-- The workflow then sends the reply.
-- `END` marks the graph complete.
-
-Code:
-
-```python
-return graph.compile()
-```
-
-Explanation:
-
-- `compile()` turns the graph definition into a runnable workflow object.
-- The API later runs this compiled graph with `ainvoke`.
+- Both approved intake paths join at the technical assistant.
+- The reply agent is the last node.
+- `END` stops the workflow.
 
 ## Running The Graph
 
-Code from `workflow.py`:
-
 ```python
-async def run(
-    self,
-    customer_email: str,
-    description: str,
-    image_filename: str = "",
-    image_content_type: str = "application/octet-stream",
-    image_bytes: bytes = b"",
-) -> AftercareState:
-    """Create the initial graph state and run the workflow."""
-
-    final_state = await self.graph.ainvoke(
-        {
-            "customer_email": customer_email,
-            "description": description,
-            "image_filename": image_filename,
-            "image_content_type": image_content_type,
-            "image_bytes": image_bytes,
-        }
-    )
-    return final_state
+final_state = await self.graph.ainvoke(
+    {
+        "customer_email": customer_email,
+        "description": description,
+        "image_filename": image_filename,
+        "image_content_type": image_content_type,
+        "image_bytes": image_bytes,
+        "workflow_step_count": 0,
+        "supervisor_route_count": 0,
+        "workflow_trace": [],
+    }
+)
 ```
 
 Explanation:
 
-- The API passes user input into `run(...)`.
-- Image fields are optional, so text-only requests can still run.
-- `ainvoke(...)` executes the graph asynchronously.
-- Every node receives state and returns updated state.
-- The final state becomes the source for the API response.
-
-## End-To-End Examples
-
-Text-only request:
-
-```text
-Initial state:
-customer_email = supervisor-text@example.com
-description = The display shows E-77 on my AsterPump X17
-image_bytes = b""
-
-Supervisor route:
-text_intake
-
-Agents:
-SupervisorAgent
--> TextCustomerServiceAgent
--> TechnicalAssistantAgent
--> ReplyAgent
-```
-
-Image-plus-text request:
-
-```text
-Initial state:
-customer_email = supervisor-image@example.com
-description = The display shows E-77
-image_bytes = <uploaded PNG bytes>
-
-Supervisor route:
-image_intake
-
-Agents:
-SupervisorAgent
--> CustomerServiceAgent
--> TechnicalAssistantAgent
--> ReplyAgent
-```
+- The API provides the initial state.
+- The planner adds `model_plan`.
+- The validator adds `planned_steps`, `planned_tools`, and `intake_route`.
+- Worker agents add ticket and reply data.
+- The final state becomes the API response source.
 
 ## Reading Logs
 
-The supervisor route appears in backend logs:
+Useful log lines:
 
 ```text
-BACKEND | INFO | agent.supervisor | routed request route=text_intake has_image=False has_text=True
-BACKEND | INFO | agent.supervisor | routed request route=image_intake has_image=True has_text=True
+BACKEND | INFO | agent.model_planner | proposed plan intent=open_ticket steps=['text_customer_service', 'technical_assistant', 'reply_agent']
+BACKEND | INFO | agent.plan_validator | approved route=text_intake steps=['text_customer_service', 'technical_assistant', 'reply_agent']
+BACKEND | INFO | workflow | finished ticket_id=25 status=completed steps=5 trace=['model_planner', 'plan_validator', 'text_customer_service', 'technical_assistant', 'reply_agent']
 ```
 
-This makes it easy to prove whether the dynamic routing used the image service
-or skipped it.
+These prove:
+
+- the model proposed a plan
+- the backend validated the plan
+- LangGraph executed only the approved route

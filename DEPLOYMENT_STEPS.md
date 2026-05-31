@@ -11,7 +11,7 @@ jump into the component files when you need component-specific details.
 ```mermaid
 flowchart LR
     User["User Browser"] --> Frontend["Frontend\nReact + Nginx\nlocalhost:8080"]
-    Frontend --> Backend["Backend\nFastAPI + LangGraph Supervisor\nlocalhost:8000"]
+    Frontend --> Backend["Backend\nFastAPI + Model-Planned LangGraph\nlocalhost:8000"]
     Backend --> Model["Model\nOllama qwen3:1.7b\nlocalhost:11434"]
     Backend --> VectorDB["Vector DB\nQdrant\nlocalhost:6333"]
     Backend --> MCP["MCP Server\nOfficial MCP HTTP\nlocalhost:8200"]
@@ -204,7 +204,7 @@ The story prefixes mean:
 | Prefix | Meaning |
 | --- | --- |
 | `FRONTEND` | Nginx received a browser request or proxied an API call. |
-| `BACKEND` | FastAPI received the request, ran LangGraph, called RAG, MCP, or Ollama. |
+| `BACKEND` | FastAPI received the request, asked the model for a plan, validated it, ran LangGraph, called RAG, MCP, or Ollama. |
 | `MCP` | The official MCP server ran a tool such as image analysis, ticket insert, or email. |
 | `IMAGE-AI` | The image analyzer inspected the uploaded file and returned detected labels. |
 | `MODEL` | Ollama startup and local model readiness. |
@@ -324,7 +324,9 @@ curl.exe -X POST http://localhost:8080/api/support/tickets `
 
 Expected:
 
-- supervisor routes to `text_intake`
+- model planner chooses the `text_ticket` plan id
+- backend expands and validates the text-intake plan
+- backend validator approves `text_intake`
 - image analyzer is skipped
 - ticket ID is returned
 - detected error code is `E-77`
@@ -341,7 +343,9 @@ curl.exe -X POST http://localhost:8080/api/support/tickets `
 
 Expected:
 
-- supervisor routes to `image_intake`
+- model planner chooses the `image_ticket` plan id
+- backend expands and validates the image-intake plan
+- backend validator approves `image_intake`
 - ticket ID is returned
 - status is `completed`
 - detected error code is `E-77`
@@ -351,7 +355,7 @@ What this tests:
 
 1. Frontend Nginx proxy
 2. Backend FastAPI endpoint
-3. LangGraph supervisor route
+3. Ollama model planner, backend plan expansion, and backend plan validator
 4. MCP tool calls
 5. Image AI service when an image is present
 6. PostgreSQL insert/update

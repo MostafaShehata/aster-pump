@@ -130,8 +130,11 @@ Explanation:
 
 - The API does not create tickets directly.
 - It calls the LangGraph workflow.
-- The workflow starts with the Supervisor Agent.
-- The supervisor routes to image intake or text intake.
+- The workflow starts with the Model Planner Agent.
+- The planner asks Ollama to choose an approved JSON `plan_id`.
+- The backend expands that `plan_id` into canonical agents and tools.
+- The Plan Validator Agent validates the expanded model plan.
+- The approved plan routes to image intake or text intake.
 - Both intake paths continue to the Technical Assistant Agent and Reply Agent.
 - `final_state` is the final shared state after all agents finish.
 

@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     rag_vector_size: int = Field(default=384)
     rag_top_k: int = Field(default=4)
     mcp_server_url: str = Field(default="http://aster-pump-aftercare-mcp-server:8200")
+    max_workflow_steps: int = Field(default=8)
+    max_supervisor_routes: int = Field(default=3)
 
 
 settings = Settings()

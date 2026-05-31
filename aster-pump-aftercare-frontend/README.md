@@ -82,8 +82,11 @@ Explanation:
 - Optional image upload requires `FormData`.
 - Field names must match the backend endpoint:
   `customer_email`, `description`, and `photo`.
-- The backend supervisor decides whether to use image analysis based on whether
-  `photo` exists.
+- The backend model planner chooses `image_ticket` when `photo` exists, or
+  `text_ticket` for text-only requests.
+- Internally, the backend asks the local model for a JSON `plan_id`, expands
+  that id into agents and tools, then validates the plan before running the
+  selected agents.
 
 ```tsx
 const response = await fetch("/api/support/tickets", {

@@ -7,7 +7,7 @@ The system demonstrates:
 - simple customer support UI
 - chat UI for manual questions and general questions
 - FastAPI backend
-- LangGraph agent orchestration
+- LangGraph model-planned agent orchestration
 - official MCP protocol tool server
 - local CPU-only LLM through Ollama
 - RAG with Qdrant
@@ -27,7 +27,8 @@ or both.
 
 Business outcome:
 
-- the supervisor agent decides whether image analysis is needed
+- the model planner chooses an approved plan id
+- the backend expands, validates, and executes that plan
 - the system detects product/error information from the image, text, or both
 - a support ticket is created in the database
 - technical troubleshooting steps are selected from the product manual
@@ -41,7 +42,9 @@ sequenceDiagram
     participant User as Customer
     participant UI as React UI + Nginx
     participant API as FastAPI Backend
-    participant Supervisor as Supervisor Agent
+    participant Planner as Model Planner Agent
+    participant Model as Ollama Planner Model
+    participant Validator as Backend Plan Validator
     participant Graph as Worker Agents
     participant MCP as MCP Server
     participant IMG as Image AI Service
@@ -51,15 +54,18 @@ sequenceDiagram
 
     User->>UI: Enter email plus image, text, or both
     UI->>API: POST /api/support/tickets
-    API->>Supervisor: Start dynamic LangGraph workflow
-    Supervisor->>Supervisor: Decide image_intake or text_intake
+    API->>Planner: Start model-planned LangGraph workflow
+    Planner->>Model: Ask for plan_id JSON
+    Model-->>Planner: Return image_ticket or text_ticket
+    Planner->>Validator: Expand plan_id to canonical agent/tool plan
+    Validator->>Validator: Check allowed agents, tools, order, inputs, max steps
     alt Image is present
-        Supervisor->>Graph: Route to image customer-service agent
+        Validator->>Graph: Approve image_customer_service route
         Graph->>MCP: analyze_image tool
         MCP->>IMG: Send uploaded image
         IMG-->>MCP: Return labels, for example E-77
     else Text only
-        Supervisor->>Graph: Route to text customer-service agent
+        Validator->>Graph: Approve text_customer_service route
         Graph->>Graph: Extract simple text labels, for example E-77
     end
     Graph->>MCP: create_ticket tool
@@ -73,10 +79,13 @@ sequenceDiagram
     API-->>UI: Return ticket result
 ```
 
-The backend uses a supervisor plus worker agents for this journey:
+The backend uses a model planner, backend validator, and worker agents for this
+journey:
 
-- Supervisor Agent: chooses the next agent based on whether the request has an
-  image, text, or both.
+- Model Planner Agent: asks the local model to choose `image_ticket` or
+  `text_ticket`.
+- Plan Validator Agent: checks the model plan against allowed agents, allowed
+  tools, required order, request inputs, and maximum step limits.
 - Image Customer Service Agent: analyzes the image through MCP and opens the
   ticket.
 - Text Customer Service Agent: skips image analysis, extracts simple text
@@ -124,6 +133,83 @@ Examples:
 
 - Manual/RAG question: `What is Bluefin mode?`
 - General model question: `Where is Egypt?`
+
+## Model-Planned Workflow
+
+The support-ticket workflow uses two levels:
+
+1. Model decides the plan.
+2. Backend validates and executes the plan.
+
+The model is never allowed to directly execute tools or create arbitrary code.
+It only chooses a JSON `plan_id`. The backend expands that id into a canonical
+agent/tool plan, validates it against a whitelist, and then LangGraph runs known
+nodes.
+
+```mermaid
+flowchart TD
+    User["User Request: image, text, or both"] --> API["FastAPI Backend"]
+    API --> Planner["Model Planner Agent"]
+    Planner --> Ollama["Ollama qwen3:1.7b"]
+    Ollama --> PlanJson["Plan JSON: image_ticket or text_ticket"]
+    PlanJson --> Templates["Backend Canonical Plan Templates"]
+    Templates --> Validator["Backend Plan Validator"]
+    Validator -->|"approved"| Executor["LangGraph Executor"]
+    Validator -->|"rejected"| Error["HTTP 400 validation error"]
+    Executor --> ImageAgent["Image Customer Service Agent"]
+    Executor --> TextAgent["Text Customer Service Agent"]
+    Executor --> TechAgent["Technical Assistant Agent"]
+    Executor --> ReplyAgent["Reply Agent"]
+    ImageAgent --> MCP["MCP Tools"]
+    TextAgent --> MCP
+    TechAgent --> RAG["Qdrant RAG"]
+    ReplyAgent --> MCP
+    MCP --> ImageTool["Image AI Tool"]
+    MCP --> DBTool["Ticket DB Tool"]
+    MCP --> MailTool["Email Tool"]
+```
+
+Example model decision:
+
+```json
+{
+  "intent": "open_ticket",
+  "plan_id": "image_ticket",
+  "reason": "The request includes an image, so image analysis is needed."
+}
+```
+
+Example backend-expanded plan:
+
+```json
+{
+  "intent": "open_ticket",
+  "reason": "The request includes an image, so image intake is required.",
+  "steps": [
+    {
+      "agent": "image_customer_service",
+      "tools": ["analyze_image", "create_ticket"]
+    },
+    {
+      "agent": "technical_assistant",
+      "tools": ["rag_search", "update_technical_steps"]
+    },
+    {
+      "agent": "reply_agent",
+      "tools": ["send_customer_email"]
+    }
+  ]
+}
+```
+
+Backend validation checks:
+
+- selected agents are whitelisted
+- selected tools are whitelisted for each agent
+- image requests start with `image_customer_service`
+- text-only requests start with `text_customer_service`
+- all support tickets continue through `technical_assistant` and `reply_agent`
+- planned step count does not exceed the configured workflow limit
 
 ## Detailed RAG Flow
 
@@ -196,7 +282,7 @@ If **Use Aster manual** is unchecked, the runtime path skips `RagService`,
 ```mermaid
 flowchart LR
     User["User Browser"] --> Frontend["Frontend\nReact + Nginx\nlocalhost:8080"]
-    Frontend --> Backend["Backend\nFastAPI + LangGraph Supervisor\nlocalhost:8000"]
+    Frontend --> Backend["Backend\nFastAPI + Model-Planned LangGraph\nlocalhost:8000"]
     Backend --> Model["Model\nOllama qwen3:1.7b\nlocalhost:11434"]
     Backend --> VectorDB["Vector DB\nQdrant\nlocalhost:6333"]
     Backend --> MCP["MCP Server\nOfficial MCP HTTP\nlocalhost:8200"]

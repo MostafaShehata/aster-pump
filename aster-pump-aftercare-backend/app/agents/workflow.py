@@ -4,8 +4,9 @@ from langgraph.graph import END, StateGraph
 
 from app.agents.nodes import (
     CustomerServiceAgent,
+    ModelPlannerAgent,
+    PlanValidatorAgent,
     ReplyAgent,
-    SupervisorAgent,
     TechnicalAssistantAgent,
     TextCustomerServiceAgent,
 )
@@ -14,7 +15,7 @@ from app.mcp.client import AftercareMcpClient
 
 
 class AftercareWorkflow:
-    """Builds and runs the supervisor-routed LangGraph workflow."""
+    """Builds and runs the model-planned LangGraph workflow."""
 
     def __init__(self, mcp_client: AftercareMcpClient | None = None) -> None:
         self.mcp_client = mcp_client or AftercareMcpClient()
@@ -24,16 +25,18 @@ class AftercareWorkflow:
         """Wire the agent nodes in the order required by the business flow."""
 
         graph = StateGraph(AftercareState)
-        graph.add_node("supervisor", SupervisorAgent())
+        graph.add_node("model_planner", ModelPlannerAgent())
+        graph.add_node("plan_validator", PlanValidatorAgent())
         graph.add_node("image_customer_service", CustomerServiceAgent(self.mcp_client))
         graph.add_node("text_customer_service", TextCustomerServiceAgent(self.mcp_client))
         graph.add_node("technical_assistant", TechnicalAssistantAgent(self.mcp_client))
         graph.add_node("reply_agent", ReplyAgent(self.mcp_client))
 
-        graph.set_entry_point("supervisor")
+        graph.set_entry_point("model_planner")
+        graph.add_edge("model_planner", "plan_validator")
         graph.add_conditional_edges(
-            "supervisor",
-            self.route_after_supervisor,
+            "plan_validator",
+            self.route_after_plan_validator,
             {
                 "image_intake": "image_customer_service",
                 "text_intake": "text_customer_service",
@@ -46,8 +49,8 @@ class AftercareWorkflow:
 
         return graph.compile()
 
-    def route_after_supervisor(self, state: AftercareState) -> str:
-        """Return the next node key selected by the supervisor."""
+    def route_after_plan_validator(self, state: AftercareState) -> str:
+        """Return the next node key approved by the plan validator."""
 
         return state["intake_route"]
 
@@ -74,12 +77,17 @@ class AftercareWorkflow:
                 "image_filename": image_filename,
                 "image_content_type": image_content_type,
                 "image_bytes": image_bytes,
+                "workflow_step_count": 0,
+                "supervisor_route_count": 0,
+                "workflow_trace": [],
             }
         )
         logging.info(
-            "workflow | finished ticket_id=%s status=%s",
+            "workflow | finished ticket_id=%s status=%s steps=%s trace=%s",
             final_state.get("ticket_id"),
             final_state.get("status"),
+            final_state.get("workflow_step_count"),
+            final_state.get("workflow_trace"),
         )
         return final_state
 
