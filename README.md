@@ -14,6 +14,102 @@ The system demonstrates:
 - PostgreSQL ticket storage
 - small Image AI service
 
+## Business Use Cases
+
+Aster Pump Aftercare is a fictional after-purchase support desk for the
+`AsterPump X17` product. The PoC demonstrates two customer journeys.
+
+### Use Case 1: Open A Support Ticket
+
+A customer has a visible error on the pump display. Instead of writing a long
+support request, the customer uploads a photo and enters an email address.
+
+Business outcome:
+
+- the system detects visible product/error information from the image
+- a support ticket is created in the database
+- technical troubleshooting steps are selected from the product manual
+- a reply is prepared and marked as sent by the email tool
+- the customer can check the latest ticket status from the UI
+
+Component flow:
+
+```mermaid
+sequenceDiagram
+    participant User as Customer
+    participant UI as React UI + Nginx
+    participant API as FastAPI Backend
+    participant Graph as LangGraph Agents
+    participant MCP as MCP Server
+    participant IMG as Image AI Service
+    participant DB as PostgreSQL
+    participant RAG as Qdrant RAG
+    participant Mail as Simulated Email
+
+    User->>UI: Upload error photo and email
+    UI->>API: POST /api/support/tickets
+    API->>Graph: Start aftercare workflow
+    Graph->>MCP: analyze_image tool
+    MCP->>IMG: Send uploaded image
+    IMG-->>MCP: Return labels, for example E-77
+    Graph->>MCP: create_ticket tool
+    MCP->>DB: Insert support ticket
+    Graph->>RAG: Retrieve manual steps for detected issue
+    Graph->>MCP: update_technical_steps tool
+    MCP->>DB: Store technical steps
+    Graph->>MCP: send_customer_email tool
+    MCP->>Mail: Write simulated email log
+    MCP->>DB: Mark ticket completed
+    API-->>UI: Return ticket result
+```
+
+The backend uses three LangGraph agents for this journey:
+
+- Customer Service Agent: analyzes the image through MCP and opens the ticket.
+- Technical Assistant Agent: searches the manual through RAG and writes steps.
+- Reply Agent: prepares the customer response and calls the email tool.
+
+### Use Case 2: Ask The Model
+
+A customer or support user can ask questions without opening a ticket. This is
+useful for quick product-help questions or general model questions.
+
+Business outcome:
+
+- when **Use Aster manual** is checked, the answer is grounded in the local
+  Aster Pump manual through RAG
+- when **Use Aster manual** is unchecked, the backend asks the local model
+  directly for a general answer
+- no ticket is created for chat-only questions
+
+Component flow:
+
+```mermaid
+sequenceDiagram
+    participant User as Customer
+    participant UI as React UI + Nginx
+    participant API as FastAPI Backend
+    participant RAG as Qdrant Vector DB
+    participant Model as Ollama qwen3:1.7b
+
+    User->>UI: Ask a question
+    UI->>API: POST /api/chat
+    alt Use Aster manual is checked
+        API->>RAG: Search embedded manual chunks
+        RAG-->>API: Return relevant manual context
+        API->>Model: Ask with retrieved context
+    else Use Aster manual is unchecked
+        API->>Model: Ask direct general question
+    end
+    Model-->>API: Return answer
+    API-->>UI: Show answer and sources when RAG was used
+```
+
+Examples:
+
+- Manual/RAG question: `What is Bluefin mode?`
+- General model question: `Where is Egypt?`
+
 ## System Map
 
 ```mermaid
