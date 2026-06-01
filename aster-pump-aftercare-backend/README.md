@@ -4,9 +4,9 @@ FastAPI + model-planned LangGraph orchestration backend for the Aster Pump
 aftercare service.
 
 This backend is the main application brain. It receives requests from the React
-frontend, runs the model-planned LangGraph workflow, retrieves manual content through
-RAG, calls the local Ollama model for chat, and uses the MCP server for external
-tools such as image analysis, database tickets, and email.
+frontend, runs the model-planned LangGraph workflow, retrieves manual content
+through RAG, runs an LLM tool-agent chat loop, and uses the MCP server for
+external tools such as image analysis, database tickets, and email.
 
 ## Architecture
 
@@ -18,7 +18,7 @@ The backend is split by domain package:
 | `app/agents` | LangGraph state, nodes, and workflow. |
 | `app/rag` | PDF/text loading, chunking, embeddings, Qdrant indexing, and retrieval. |
 | `app/mcp` | Official MCP Streamable HTTP client. |
-| `app/model` | Ollama chat client and prompt building. |
+| `app/model` | Ollama chat agent, MCP tool planning, and prompt building. |
 
 Each package has its own `README.md` with beginner-friendly code explanations.
 
@@ -91,6 +91,40 @@ workflow step count.
 7. Vectors and payloads are stored in Qdrant collection `asterpump_x17_docs`.
 8. Chat or agents search Qdrant when they need local manual knowledge.
 
+## Chat LLM Tool-Agent Flow
+
+The chat endpoint is now also an LLM agent. It does not just call the model for
+text. It asks the model to decide whether it should answer directly or request
+one approved MCP tool.
+
+1. Frontend sends `POST /api/chat`.
+2. Backend optionally retrieves RAG context when `use_rag=true`.
+3. `ChatToolPlanner` asks Ollama for JSON:
+   `{"action":"answer"}` or `{"action":"tool_call"}`.
+4. If the model requests a tool, backend validates the tool name and arguments.
+5. `McpToolExecutor` calls the official MCP server.
+6. MCP reads PostgreSQL ticket data.
+7. Backend sends the compact tool result back to Ollama.
+8. Ollama writes the final customer-facing answer.
+
+Approved chat MCP tools:
+
+- `get_ticket`
+- `get_latest_ticket_for_customer`
+- `get_tickets_for_customer`
+
+Example chat request:
+
+```text
+Get me list of my tickets for llm-agent-demo@example.com
+```
+
+Expected internal behavior:
+
+- LLM chooses `get_tickets_for_customer`.
+- Backend validates and executes MCP.
+- LLM summarizes returned tickets.
+
 ## Endpoints
 
 - `GET /api/health`
@@ -101,7 +135,7 @@ workflow step count.
 
 ## Runtime Dependencies
 
-- Ollama model service for `/api/chat`.
+- Ollama model service for `/api/chat` direct answers and tool decisions.
 - Qdrant for RAG retrieval.
 - MCP server for image analysis, ticket DB operations, ticket lookup, and email.
 
@@ -129,5 +163,5 @@ tools, and model chat.
 | `app/agents/nodes.py` | Model planner, plan validator, customer-service, technical-assistant, and reply agents. |
 | `app/rag/service.py` | Coordinates RAG indexing and retrieval. |
 | `app/mcp/client.py` | Official MCP client wrapper. |
-| `app/model/chat_client.py` | Ollama chat service. |
+| `app/model/chat_client.py` | LLM chat agent, tool planner, MCP executor, and Ollama client. |
 | `app/schemas.py` | API request and response models. |

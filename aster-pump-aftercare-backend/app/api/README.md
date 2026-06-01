@@ -138,6 +138,22 @@ Explanation:
 - Both intake paths continue to the Technical Assistant Agent and Reply Agent.
 - `final_state` is the final shared state after all agents finish.
 
+## Chat Endpoint
+
+Code:
+
+```python
+response = await chat_service.chat(request)
+```
+
+Explanation:
+
+- The API route does not decide whether MCP is needed.
+- `chat_service` is an LLM tool-agent.
+- The LLM first chooses either direct answer or approved MCP tool call.
+- The backend validates and executes requested MCP tools.
+- The final answer is returned as `ChatResponse`.
+
 ## Mapping Internal State To API Response
 
 Code:

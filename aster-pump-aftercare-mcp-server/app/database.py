@@ -158,3 +158,21 @@ class TicketRepository:
                 result = to_jsonable_row(dict(row)) if row else None
                 logging.info("story.db | latest ticket email=%s result=%s", customer_email, result)
                 return result
+
+    def list_tickets_for_email(self, customer_email: str) -> list[dict[str, Any]]:
+        """Fetch all tickets for a customer email, newest first."""
+
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM support_tickets
+                    WHERE customer_email = %s
+                    ORDER BY created_at DESC
+                    """,
+                    (customer_email,),
+                )
+                rows = [to_jsonable_row(dict(row)) for row in cur.fetchall()]
+                logging.info("story.db | list tickets email=%s count=%s rows=%s", customer_email, len(rows), rows)
+                return [row for row in rows if row is not None]

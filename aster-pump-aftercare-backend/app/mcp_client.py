@@ -31,3 +31,7 @@ async def get_ticket(ticket_id: int) -> dict | None:
 
 async def get_latest_ticket_for_customer(customer_email: str) -> dict | None:
     return await _client.get_latest_ticket_for_customer(customer_email)
+
+
+async def get_tickets_for_customer(customer_email: str) -> dict:
+    return await _client.get_tickets_for_customer(customer_email)

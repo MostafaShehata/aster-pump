@@ -180,3 +180,12 @@ class AftercareMcpClient:
             "get_latest_ticket_for_customer",
             {"customer_email": customer_email},
         )
+
+    async def get_tickets_for_customer(self, customer_email: str) -> dict:
+        """Call the MCP ticket-list tool."""
+
+        logging.info("story.mcp-client | preparing get_tickets_for_customer email=%s", customer_email)
+        return await self.session_client.call_tool(
+            "get_tickets_for_customer",
+            {"customer_email": customer_email},
+        )

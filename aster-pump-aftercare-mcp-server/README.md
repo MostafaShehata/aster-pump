@@ -8,8 +8,10 @@ The MCP server is the tool gateway. It owns integration with:
 - PostgreSQL ticket database
 - simulated email sending
 - ticket lookup
+- ticket list lookup for LLM chat tools
 
-The backend agents call this server through the official MCP client.
+The backend LangGraph agents and chat LLM tool-agent call this server through
+the official MCP client.
 
 ## Technology Brief
 
@@ -142,6 +144,30 @@ Explanation:
 
 - Email is simulated by writing to a log file.
 - A real system could replace this with SMTP, SendGrid, or Microsoft Graph.
+
+### MCP Tool: List Tickets For Customer
+
+```python
+@mcp.tool()
+def get_tickets_for_customer(customer_email: str):
+    """Return all support tickets for a customer email, newest first."""
+```
+
+Explanation:
+
+- Exposes ticket history lookup as an MCP tool.
+- The chat LLM agent can request this tool when the user asks for ticket list.
+- The backend validates the LLM tool request before MCP is called.
+
+```python
+tickets = ticket_repository.list_tickets_for_email(customer_email)
+return {"tickets": tickets, "count": len(tickets), "customer_email": customer_email}
+```
+
+Explanation:
+
+- `TicketRepository` owns the PostgreSQL query.
+- MCP returns a JSON object with the email, count, and ticket rows.
 
 ### ASGI App
 

@@ -104,7 +104,10 @@ Business outcome:
   Aster Pump manual through RAG
 - when **Use Aster manual** is unchecked, the backend asks the local model
   directly for a general answer
-- no ticket is created for chat-only questions
+- when the user asks about tickets, the LLM can request approved MCP tools such
+  as `get_tickets_for_customer`
+- the backend validates the LLM tool request before executing MCP
+- no new ticket is created for chat-only questions
 
 Component flow:
 
@@ -113,19 +116,32 @@ sequenceDiagram
     participant User as Customer
     participant UI as React UI + Nginx
     participant API as FastAPI Backend
+    participant Agent as LLM Tool Agent
     participant RAG as Qdrant Vector DB
     participant Model as Ollama qwen3:1.7b
+    participant MCP as MCP Server
+    participant DB as PostgreSQL
 
     User->>UI: Ask a question
     UI->>API: POST /api/chat
     alt Use Aster manual is checked
         API->>RAG: Search embedded manual chunks
         RAG-->>API: Return relevant manual context
-        API->>Model: Ask with retrieved context
     else Use Aster manual is unchecked
-        API->>Model: Ask direct general question
+        API->>Agent: Continue without RAG context
     end
-    Model-->>API: Return answer
+    API->>Agent: Ask LLM to choose answer or MCP tool
+    Agent->>Model: Plan JSON: answer or tool_call
+    Model-->>Agent: Tool decision
+    alt LLM requests ticket tool
+        Agent->>MCP: Call validated MCP tool
+        MCP->>DB: Read ticket data
+        DB-->>MCP: Ticket rows
+        MCP-->>Agent: Tool result
+    end
+    Agent->>Model: Ask final answer with RAG/tool context
+    Model-->>Agent: Final answer
+    Agent-->>API: Chat response
     API-->>UI: Show answer and sources when RAG was used
 ```
 
@@ -133,6 +149,7 @@ Examples:
 
 - Manual/RAG question: `What is Bluefin mode?`
 - General model question: `Where is Egypt?`
+- MCP tool question: `Get me list of my tickets for llm-agent-demo@example.com`
 
 ## Model-Planned Workflow
 

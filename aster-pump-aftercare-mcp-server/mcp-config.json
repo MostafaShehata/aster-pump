@@ -33,6 +33,11 @@
       "name": "get_latest_ticket_for_customer",
       "protocol_method": "tools/call",
       "description": "Return the latest support ticket for a customer email."
+    },
+    {
+      "name": "get_tickets_for_customer",
+      "protocol_method": "tools/call",
+      "description": "Return all support tickets for a customer email, newest first."
     }
   ]
 }

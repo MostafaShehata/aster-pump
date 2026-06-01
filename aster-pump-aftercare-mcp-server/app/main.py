@@ -150,6 +150,16 @@ def get_latest_ticket_for_customer(customer_email: str):
     return ticket
 
 
+@mcp.tool()
+def get_tickets_for_customer(customer_email: str):
+    """Return all support tickets for a customer email, newest first."""
+
+    logging.info("story.mcp.tool.get_tickets_for_customer | email=%s", customer_email)
+    tickets = ticket_repository.list_tickets_for_email(customer_email)
+    logging.info("story.mcp.tool.get_tickets_for_customer | count=%s result=%s", len(tickets), tickets)
+    return {"tickets": tickets, "count": len(tickets), "customer_email": customer_email}
+
+
 @mcp.resource("config://mcp")
 def read_tool_manifest() -> str:
     """Return the local tool manifest documentation as a resource."""
