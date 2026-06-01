@@ -1,12 +1,11 @@
 # Aster Pump Aftercare Backend
 
-FastAPI + model-planned LangGraph orchestration backend for the Aster Pump
-aftercare service.
+FastAPI chat orchestration backend for the Aster Pump aftercare service.
 
 This backend is the main application brain. It receives requests from the React
-frontend, runs the model-planned LangGraph workflow, retrieves manual content
-through RAG, runs an LLM tool-agent chat loop, and uses the MCP server for
-external tools such as image analysis, database tickets, and email.
+frontend, retrieves manual content through RAG, runs an LLM tool-agent chat
+loop, and uses the MCP server for external tools such as image analysis,
+database tickets, and email.
 
 ## Architecture
 
@@ -15,14 +14,56 @@ The backend is split by domain package:
 | Package | Responsibility |
 | --- | --- |
 | `app/api` | FastAPI app creation and HTTP routes. |
-| `app/agents` | LangGraph state, nodes, and workflow. |
+| `app/agents` | Legacy LangGraph training workflow retained for comparison. |
 | `app/rag` | PDF/text loading, chunking, embeddings, Qdrant indexing, and retrieval. |
 | `app/mcp` | Official MCP Streamable HTTP client. |
 | `app/model` | Ollama chat agent, MCP tool planning, and prompt building. |
 
 Each package has its own `README.md` with beginner-friendly code explanations.
 
-## Model-Planned Agent Flow
+## Primary Chat LLM Tool-Agent Flow
+
+The current UI calls the chat route for everything. A user can ask a general
+question, ask a manual/RAG question, list tickets, get latest ticket status, or
+create a ticket from text/image.
+
+1. Frontend sends `POST /api/chat/upload` with `message`, `history`,
+   `use_rag`, and optional `photo`.
+2. Backend retrieves RAG context when `use_rag=true`.
+3. `ChatToolPlanner` asks Ollama for JSON:
+   `{"action":"answer"}` or `{"action":"tool_call"}`.
+4. If the model requests a tool, backend validates the tool name and arguments.
+5. For image tickets, backend calls MCP `analyze_image`, then `create_ticket`,
+   `update_technical_steps`, and `send_customer_email`.
+6. For text tickets, backend extracts simple text labels, then creates and
+   completes the ticket through MCP.
+7. For ticket lookup, backend calls MCP ticket read tools.
+8. Backend returns one `ChatResponse` to the chat UI.
+
+Approved chat MCP workflows:
+
+- `open_ticket_from_image`
+- `open_ticket_from_text`
+- `get_ticket`
+- `get_latest_ticket_for_customer`
+- `get_tickets_for_customer`
+
+Example chat request:
+
+```text
+Get me list of my tickets for customer@example.com
+```
+
+Expected internal behavior:
+
+- LLM chooses `get_tickets_for_customer`.
+- Backend validates and executes MCP.
+- Backend summarizes returned tickets.
+
+## Legacy LangGraph Training Flow
+
+The older `/api/support/tickets` route still exists as a training example for
+LangGraph. The current simplified UI does not call it.
 
 1. Frontend submits customer email plus image, text, or both.
 2. API route calls `aftercare_workflow.run(...)`.
@@ -91,44 +132,11 @@ workflow step count.
 7. Vectors and payloads are stored in Qdrant collection `asterpump_x17_docs`.
 8. Chat or agents search Qdrant when they need local manual knowledge.
 
-## Chat LLM Tool-Agent Flow
-
-The chat endpoint is now also an LLM agent. It does not just call the model for
-text. It asks the model to decide whether it should answer directly or request
-one approved MCP tool.
-
-1. Frontend sends `POST /api/chat`.
-2. Backend optionally retrieves RAG context when `use_rag=true`.
-3. `ChatToolPlanner` asks Ollama for JSON:
-   `{"action":"answer"}` or `{"action":"tool_call"}`.
-4. If the model requests a tool, backend validates the tool name and arguments.
-5. `McpToolExecutor` calls the official MCP server.
-6. MCP reads PostgreSQL ticket data.
-7. Backend sends the compact tool result back to Ollama.
-8. Ollama writes the final customer-facing answer.
-
-Approved chat MCP tools:
-
-- `get_ticket`
-- `get_latest_ticket_for_customer`
-- `get_tickets_for_customer`
-
-Example chat request:
-
-```text
-Get me list of my tickets for llm-agent-demo@example.com
-```
-
-Expected internal behavior:
-
-- LLM chooses `get_tickets_for_customer`.
-- Backend validates and executes MCP.
-- LLM summarizes returned tickets.
-
 ## Endpoints
 
 - `GET /api/health`
 - `POST /api/chat`
+- `POST /api/chat/upload`
 - `POST /api/support/tickets`
 - `GET /api/support/tickets/{ticket_id}`
 - `GET /api/support/tickets?email=<customer email>`

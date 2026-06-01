@@ -1,28 +1,24 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { BookOpenText, Bot, BrainCircuit, Camera, CheckCircle2, Database, Info, Loader2, Mail, MessageSquareText, Network, Search, Send, Wrench, X } from "lucide-react";
+import {
+  BookOpenText,
+  Bot,
+  BrainCircuit,
+  Camera,
+  Database,
+  FileImage,
+  Loader2,
+  Mail,
+  MessageSquareText,
+  Network,
+  Paperclip,
+  Send,
+  Ticket,
+  Trash2,
+  Wrench,
+  X,
+} from "lucide-react";
 import "./styles.css";
-
-type TicketResponse = {
-  ticket_id: number;
-  customer_email: string;
-  status: string;
-  detected_objects: string[];
-  detected_error_code: string | null;
-  technical_steps: string;
-  reply_subject: string;
-  reply_body: string;
-  email_sent: boolean;
-};
-
-type TicketStatus = {
-  ticket_id: number;
-  customer_email: string;
-  status: string;
-  detected_error_code: string | null;
-  technical_steps: string | null;
-  email_sent: boolean;
-};
 
 type ChatMessage = {
   role: "user" | "assistant";
@@ -36,313 +32,260 @@ type ChatResponse = {
   sources: string[];
 };
 
-function App() {
-  const [email, setEmail] = useState("customer@example.com");
-  const [description, setDescription] = useState("");
-  const [photo, setPhoto] = useState<File | null>(null);
-  const [ticket, setTicket] = useState<TicketResponse | null>(null);
-  const [status, setStatus] = useState<TicketStatus | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [statusLoading, setStatusLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [agentModalOpen, setAgentModalOpen] = useState(false);
-  const [chatQuestion, setChatQuestion] = useState("What is Bluefin mode?");
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [useRag, setUseRag] = useState(true);
-  const [chatLoading, setChatLoading] = useState(false);
-  const [chatError, setChatError] = useState<string | null>(null);
+const examples = [
+  {
+    label: "Create text ticket",
+    message: "Create ticket for customer@example.com. The display shows E-77 on my AsterPump X17.",
+    useRag: true,
+  },
+  {
+    label: "List tickets",
+    message: "Get me list of my tickets for customer@example.com",
+    useRag: false,
+  },
+  {
+    label: "Latest status",
+    message: "Get latest ticket status for customer@example.com",
+    useRag: false,
+  },
+  {
+    label: "Ask manual",
+    message: "What is Bluefin mode?",
+    useRag: true,
+  },
+  {
+    label: "General question",
+    message: "Where is Egypt?",
+    useRag: false,
+  },
+];
 
-  async function submitTicket(event: React.FormEvent) {
-    event.preventDefault();
-    if (!photo && !description.trim()) {
-      setError("Please add an error photo, a text description, or both.");
+function App() {
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    {
+      role: "assistant",
+      content:
+        "Hello. I can create support tickets from text or an uploaded pump screen image, list your tickets, check latest status, answer from the AsterPump manual, or answer general questions.",
+    },
+  ]);
+  const [draft, setDraft] = useState("");
+  const [photo, setPhoto] = useState<File | null>(null);
+  const [useRag, setUseRag] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  async function sendMessage(event?: React.FormEvent) {
+    event?.preventDefault();
+    const text = draft.trim();
+    if (!text && !photo) {
+      setError("Type a message or attach an image first.");
       return;
     }
 
+    const userText = buildUserMessage(text, photo);
+    const history = messages.slice(-8);
     const formData = new FormData();
-    formData.append("customer_email", email);
-    formData.append("description", description);
+    formData.append("message", text || "Create a support ticket from the uploaded image.");
+    formData.append("history", JSON.stringify(history));
+    formData.append("use_rag", String(useRag));
     if (photo) {
       formData.append("photo", photo);
     }
 
     setLoading(true);
     setError(null);
-    setTicket(null);
-    setStatus(null);
-    setAgentModalOpen(true);
+    setMessages((current) => [...current, { role: "user", content: userText }]);
 
     try {
-      const response = await fetch("/api/support/tickets", {
+      const response = await fetch("/api/chat/upload", {
         method: "POST",
         body: formData,
       });
       if (!response.ok) {
         throw new Error(`Backend returned HTTP ${response.status}`);
       }
-      setTicket((await response.json()) as TicketResponse);
+
+      const data = (await response.json()) as ChatResponse;
+      const sources = data.sources.length > 0 ? `\n\nSources: ${data.sources.join(", ")}` : "";
+      setMessages((current) => [
+        ...current,
+        {
+          role: "assistant",
+          content: `${data.reply}${sources}`,
+        },
+      ]);
+      setDraft("");
+      setPhoto(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unknown support request failure");
+      const message = caught instanceof Error ? caught.message : "Unknown chat failure";
+      setError(message);
+      setMessages((current) => [...current, { role: "assistant", content: message }]);
     } finally {
       setLoading(false);
     }
   }
 
-  async function lookupStatus() {
-    setStatusLoading(true);
+  function applyExample(message: string, exampleUseRag: boolean) {
+    setDraft(message);
+    setUseRag(exampleUseRag);
     setError(null);
-    setStatus(null);
-
-    try {
-      const response = await fetch(`/api/support/tickets?email=${encodeURIComponent(email)}`);
-      if (!response.ok) {
-        throw new Error(`Backend returned HTTP ${response.status}`);
-      }
-      setStatus((await response.json()) as TicketStatus);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unknown status lookup failure");
-    } finally {
-      setStatusLoading(false);
-    }
   }
 
-  async function sendChatQuestion(event: React.FormEvent) {
-    event.preventDefault();
-    const message = chatQuestion.trim();
-    if (!message) {
-      setChatError("Please enter a question.");
-      return;
-    }
-
-    const history = chatMessages.slice(-6);
-    setChatLoading(true);
-    setChatError(null);
-    setChatMessages((current) => [...current, { role: "user", content: message }]);
-
-    try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message,
-          history,
-          use_rag: useRag,
-        }),
-      });
-      if (!response.ok) {
-        throw new Error(`Backend returned HTTP ${response.status}`);
-      }
-      const data = (await response.json()) as ChatResponse;
-      const sourceLine = data.sources.length > 0 ? `\n\nSources: ${data.sources.join(", ")}` : "";
-      setChatMessages((current) => [
-        ...current,
-        { role: "assistant", content: `${data.reply}${sourceLine}` },
-      ]);
-      setChatQuestion("");
-    } catch (caught) {
-      setChatError(caught instanceof Error ? caught.message : "Unknown chat failure");
-    } finally {
-      setChatLoading(false);
+  function clearConversation() {
+    setMessages([]);
+    setDraft("");
+    setPhoto(null);
+    setError(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
     }
   }
 
   return (
     <main className="app-shell">
-      <AgentWorkModal
-        open={agentModalOpen}
-        ticket={ticket}
-        error={error}
-        onClose={() => {
-          setAgentModalOpen(false);
-          setTicket(null);
-          setStatus(null);
-        }}
-        onCheckStatus={() => {
-          setAgentModalOpen(false);
-          setTicket(null);
-          void lookupStatus();
-        }}
-      />
-
       <aside className="sidebar">
         <div className="brand">
           <Wrench size={28} />
           <div>
             <strong>Aster Pump Aftercare</strong>
-            <span>Local agentic support desk</span>
+            <span>Chat-first local support console</span>
           </div>
         </div>
 
-        <div className="system-summary">
-          <p>System flow</p>
-          <strong>Photo to ticket, manual to answer, agent to reply.</strong>
-        </div>
+        <section className="side-section">
+          <p>What this chat can do</p>
+          <div className="capability"><Ticket size={17} /> Create a ticket from text or image</div>
+          <div className="capability"><Database size={17} /> List tickets and latest status</div>
+          <div className="capability"><BookOpenText size={17} /> Answer from the pump manual</div>
+          <div className="capability"><BrainCircuit size={17} /> Answer normal model questions</div>
+        </section>
 
-        <div className="stack-list">
-          <div><Bot size={17} /> Customer Service Agent</div>
-          <div><BookOpenText size={17} /> Technical Assistant + RAG</div>
-          <div><Mail size={17} /> Reply Agent</div>
-        </div>
-
-        <div className="system-map">
-          <div>
-            <Network size={18} />
-            <span>MCP tools</span>
-            <small>image, tickets, email</small>
-          </div>
-          <div>
-            <Database size={18} />
-            <span>Qdrant + PostgreSQL</span>
-            <small>manual search and ticket store</small>
-          </div>
-          <div>
-            <BrainCircuit size={18} />
-            <span>Local model</span>
-            <small>qwen3:1.7b on Ollama</small>
-          </div>
-        </div>
-
-        <div className="sidebar-note">
-          <CheckCircle2 size={17} />
-          <span>Runs locally in Docker Desktop with no cloud account required.</span>
-        </div>
+        <section className="side-section">
+          <p>How the flow is wired</p>
+          <div className="flow-step"><MessageSquareText size={17} /> Browser sends one chat request</div>
+          <div className="flow-step"><Bot size={17} /> Backend LLM chooses answer or tool</div>
+          <div className="flow-step"><Network size={17} /> MCP calls image, DB, and email tools</div>
+          <div className="flow-step"><Mail size={17} /> Reply returns to chat</div>
+        </section>
       </aside>
 
-      <section className="support-panel">
+      <section className="chat-page">
         <header className="page-header">
           <div>
-            <p>Fictional product support</p>
-            <h1>AsterPump X17 Aftercare</h1>
+            <p>Local Docker PoC</p>
+            <h1>Aftercare Chat</h1>
           </div>
-          <button className="secondary-button" onClick={lookupStatus} disabled={statusLoading} type="button">
-            {statusLoading ? <Loader2 className="spin" size={18} /> : <Search size={18} />}
-            Check latest status
+          <button className="secondary-button" type="button" onClick={clearConversation}>
+            <Trash2 size={18} />
+            Clear
           </button>
         </header>
 
-        <div className="content-grid">
-          <form className="panel support-form" onSubmit={submitTicket}>
-            <label>
-              Customer email
-              <span className="input-icon">
-                <Mail size={17} />
-                <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required />
-              </span>
-            </label>
-
-            <label>
-              Error photo
-              <span className="file-input">
-                <Camera size={18} />
-                <input
-                  onChange={(event) => setPhoto(event.target.files?.[0] ?? null)}
-                  type="file"
-                  accept="image/*,.txt"
-                />
-              </span>
-              <small>Optional. Upload a screen image, or describe the issue in text below.</small>
-            </label>
-
-            <label>
-              Description
-              <textarea
-                rows={5}
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-              />
-            </label>
-
-            <button className="primary-button" disabled={loading} type="submit">
-              {loading ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
-              Start Support Ticket
-            </button>
-          </form>
-
-          <section className="panel result-panel" aria-live="polite">
-            {!ticket && !status && !error && (
-              <div className="empty-state">
-                <Wrench size={42} />
-                <h2>Ready for an aftercare request</h2>
-                <p>Upload an error photo and the LangGraph workflow will create a ticket, retrieve steps, and send a reply.</p>
-              </div>
-            )}
-
-            {error && <div className="error">{error}</div>}
-
-            {ticket && (
-              <ResultCard
-                title={`Ticket #${ticket.ticket_id} completed`}
-                email={ticket.customer_email}
-                status={ticket.status}
-                errorCode={ticket.detected_error_code}
-                objects={ticket.detected_objects}
-                steps={ticket.technical_steps}
-                emailSent={ticket.email_sent}
-              />
-            )}
-
-            {status && (
-              <ResultCard
-                title={`Latest ticket #${status.ticket_id}`}
-                email={status.customer_email}
-                status={status.status}
-                errorCode={status.detected_error_code}
-                objects={[]}
-                steps={status.technical_steps ?? "No technical steps stored yet."}
-                emailSent={status.email_sent}
-              />
-            )}
-          </section>
-        </div>
-
-        <section className="panel chat-panel" aria-labelledby="chat-title">
-          <div className="chat-header">
-            <div>
-              <p>Ask the assistant</p>
-              <h2 id="chat-title">Product manual or general questions</h2>
-            </div>
-            <label className="rag-toggle">
-              <input
-                checked={useRag}
-                onChange={(event) => setUseRag(event.target.checked)}
-                type="checkbox"
-              />
-              <span>
-                <BookOpenText size={17} />
-                Use Aster manual
-              </span>
-            </label>
+        <section className="chat-card" aria-label="Aftercare chat">
+          <div className="example-row">
+            {examples.map((example) => (
+              <button
+                className="example-button"
+                key={example.label}
+                type="button"
+                onClick={() => applyExample(example.message, example.useRag)}
+              >
+                {example.label}
+              </button>
+            ))}
           </div>
 
           <div className="chat-log" aria-live="polite">
-            {chatMessages.length === 0 && (
-              <div className="chat-empty">
-                <MessageSquareText size={34} />
-                <span>Ask about the Aster manual or switch the manual off for a general question.</span>
+            {messages.length === 0 && (
+              <div className="empty-chat">
+                <MessageSquareText size={38} />
+                <span>Start with a ticket request, ticket lookup, manual question, or general question.</span>
               </div>
             )}
 
-            {chatMessages.map((message, index) => (
+            {messages.map((message, index) => (
               <article className={`chat-message ${message.role}`} key={`${message.role}-${index}`}>
                 <strong>{message.role === "user" ? "You" : "Assistant"}</strong>
                 <p>{message.content}</p>
               </article>
             ))}
+
+            {loading && (
+              <article className="chat-message assistant">
+                <strong>Assistant</strong>
+                <p><Loader2 className="spin inline-icon" size={16} /> Thinking and checking tools...</p>
+              </article>
+            )}
           </div>
 
-          {chatError && <div className="error">{chatError}</div>}
+          {error && <div className="error">{error}</div>}
 
-          <form className="chat-form" onSubmit={sendChatQuestion}>
+          {photo && (
+            <div className="attachment-pill">
+              <FileImage size={17} />
+              <span>{photo.name}</span>
+              <button
+                aria-label="Remove attachment"
+                type="button"
+                onClick={() => {
+                  setPhoto(null);
+                  if (fileInputRef.current) {
+                    fileInputRef.current.value = "";
+                  }
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
+
+          <form className="composer" onSubmit={sendMessage}>
             <input
-              aria-label="Question"
-              value={chatQuestion}
-              onChange={(event) => setChatQuestion(event.target.value)}
-              placeholder={useRag ? "Ask about Bluefin, E-77, C2..." : "Ask a general question..."}
+              ref={fileInputRef}
+              className="hidden-file"
+              type="file"
+              accept="image/*"
+              onChange={(event) => setPhoto(event.target.files?.[0] ?? null)}
             />
-            <button className="primary-button" disabled={chatLoading} type="submit">
-              {chatLoading ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
-              Ask
+            <button
+              className="icon-button"
+              type="button"
+              title="Attach error screen image"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Paperclip size={20} />
             </button>
+            <textarea
+              aria-label="Message"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void sendMessage();
+                }
+              }}
+              placeholder="Ask a question, create a ticket, list tickets, or attach an image..."
+              rows={3}
+            />
+            <div className="composer-actions">
+              <label className="rag-toggle">
+                <input
+                  checked={useRag}
+                  onChange={(event) => setUseRag(event.target.checked)}
+                  type="checkbox"
+                />
+                <span><BookOpenText size={17} /> Use manual</span>
+              </label>
+              <button className="primary-button" disabled={loading} type="submit">
+                {loading ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
+                Send
+              </button>
+            </div>
           </form>
         </section>
       </section>
@@ -350,108 +293,14 @@ function App() {
   );
 }
 
-function AgentWorkModal({
-  open,
-  ticket,
-  error,
-  onClose,
-  onCheckStatus,
-}: {
-  open: boolean;
-  ticket: TicketResponse | null;
-  error: string | null;
-  onClose: () => void;
-  onCheckStatus: () => void;
-}) {
-  if (!open) {
-    return null;
+function buildUserMessage(text: string, photo: File | null): string {
+  if (text && photo) {
+    return `${text}\n\nAttached image: ${photo.name}`;
   }
-
-  return (
-    <div className="modal-backdrop" role="presentation">
-      <section className="simple-info-modal" role="dialog" aria-modal="true" aria-labelledby="agent-modal-title">
-        <button className="icon-button" type="button" aria-label="Close" onClick={onClose}>
-          <X size={18} />
-        </button>
-
-        <span className="modal-icon">
-          <Info size={30} />
-        </span>
-
-        <h2 id="agent-modal-title">Our Virtual Agent will work on your request</h2>
-
-        <p className="modal-copy">
-          Response will be sent to you in email. You can also check the latest request status here.
-        </p>
-
-        {ticket && (
-          <div className="simple-ticket-number">
-            Ticket #{ticket.ticket_id}
-          </div>
-        )}
-
-        {error && <div className="error">{error}</div>}
-
-        <div className="modal-actions">
-          <button className="secondary-button" type="button" onClick={onCheckStatus}>
-            <Search size={18} />
-            Check status here
-          </button>
-          <button className="primary-button" type="button" onClick={onClose}>
-            Back to home
-          </button>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function ResultCard({
-  title,
-  email,
-  status,
-  errorCode,
-  objects,
-  steps,
-  emailSent,
-}: {
-  title: string;
-  email: string;
-  status: string;
-  errorCode: string | null;
-  objects: string[];
-  steps: string;
-  emailSent: boolean;
-}) {
-  return (
-    <article className="result-card">
-      <div className="result-header">
-        <h2>{title}</h2>
-        <span>{status}</span>
-      </div>
-      <dl>
-        <div>
-          <dt>Email</dt>
-          <dd>{email}</dd>
-        </div>
-        <div>
-          <dt>Error code</dt>
-          <dd>{errorCode ?? "Not detected"}</dd>
-        </div>
-        <div>
-          <dt>Email sent</dt>
-          <dd>{emailSent ? "Yes" : "No"}</dd>
-        </div>
-      </dl>
-      {objects.length > 0 && (
-        <div className="chips">
-          {objects.map((item) => <span key={item}>{item}</span>)}
-        </div>
-      )}
-      <h3>Technical steps</h3>
-      <p className="steps">{steps}</p>
-    </article>
-  );
+  if (photo) {
+    return `Attached image: ${photo.name}`;
+  }
+  return text;
 }
 
 createRoot(document.getElementById("root")!).render(<App />);

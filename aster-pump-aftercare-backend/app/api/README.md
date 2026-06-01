@@ -91,7 +91,7 @@ Explanation:
 - All endpoint definitions are grouped there.
 - This keeps app setup separate from route behavior.
 
-## Create Ticket Endpoint
+## Legacy Create Ticket Endpoint
 
 Code:
 
@@ -106,7 +106,8 @@ async def create_support_ticket(
 
 Explanation:
 
-- This endpoint receives the support form from the React app.
+- This endpoint is retained for LangGraph training and direct API testing.
+- The current React app uses `/api/chat/upload` instead.
 - `Form(...)` means the value comes from multipart form data.
 - `File(None)` means the uploaded photo is optional.
 - The request is valid when it has an image, text description, or both.
@@ -153,6 +154,47 @@ Explanation:
 - The LLM first chooses either direct answer or approved MCP tool call.
 - The backend validates and executes requested MCP tools.
 - The final answer is returned as `ChatResponse`.
+
+## Chat Upload Endpoint
+
+Code:
+
+```python
+@router.post("/chat/upload", response_model=ChatResponse)
+async def chat_with_optional_upload(
+    message: str = Form(...),
+    history: str = Form("[]"),
+    use_rag: bool = Form(False),
+    photo: UploadFile | None = File(None),
+) -> ChatResponse:
+```
+
+Explanation:
+
+- This is the primary route used by the simplified React UI.
+- It accepts normal chat text and an optional image in the same request.
+- `history` is a JSON string because multipart form fields are text values.
+- `photo` is optional, so text-only questions still use this route.
+
+Code:
+
+```python
+response = await chat_service.chat_with_optional_image(
+    request,
+    image_filename=(photo.filename if photo is not None else "") or "uploaded-photo",
+    image_bytes=image_bytes,
+    image_content_type=(photo.content_type if photo is not None else None) or "application/octet-stream",
+)
+```
+
+Explanation:
+
+- The API does not decide which tool to use.
+- It passes the text and optional image bytes to the chat service.
+- The LLM planner decides whether to answer directly or request an approved MCP
+  workflow such as `open_ticket_from_image`.
+- The backend logs image filename, size, and content type, but not raw image
+  content.
 
 ## Mapping Internal State To API Response
 

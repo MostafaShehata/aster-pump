@@ -1,77 +1,77 @@
 # Aster Pump Aftercare Frontend
 
-React user interface for the Aster Pump Aftercare PoC.
+React chat UI for the Aster Pump Aftercare PoC.
 
-This app is the customer-facing screen. It lets the user:
-
-- enter customer email
-- upload an error photo, type a text description, or provide both
-- start a support ticket
-- see a simple virtual-agent message
-- check the latest ticket status
-- view returned troubleshooting steps
-- ask product-manual questions with RAG enabled
-- ask general questions with RAG disabled
+The frontend is now one simple chat screen. The user can type a message, attach
+an optional pump screen image, enable or disable manual/RAG context, and send
+the request to the backend.
 
 ## Technology Brief
 
 ### React
 
-React is used for the UI because it is lightweight, familiar, and works well for
-interactive forms and state updates.
+React is used because the UI is an interactive chat surface with local state:
+messages, upload selection, loading state, RAG toggle, and error display.
 
 ### Vite
 
-Vite builds the React app into static files in `dist`.
+Vite builds the React app locally into the `dist` folder.
 
 ### Nginx
 
-The Docker container uses Nginx only to serve the already-built `dist` folder
-and proxy browser `/api/*` calls to the backend.
+The container does not run Node.js. It only serves the already-built `dist`
+folder with Nginx and proxies browser `/api/*` calls to the backend.
+
+## User Functions
+
+- create a ticket from typed text
+- create a ticket from an uploaded image plus email in chat text
+- list tickets for an email address
+- get latest ticket status
+- ask manual/RAG questions such as `What is Bluefin mode?`
+- ask general model questions such as `Where is Egypt?`
 
 ## Important Files
 
 | File | Function |
 | --- | --- |
-| `src/main.tsx` | Main React app, form handling, status lookup, modal, result rendering, and chat UI. |
-| `src/styles.css` | UI layout and component styling. |
+| `src/main.tsx` | Single chat UI, image upload, RAG toggle, examples, API call. |
+| `src/styles.css` | Layout, sidebar, chat log, composer, responsive styling. |
 | `nginx.conf` | Serves React and proxies `/api` to backend. |
-| `build-app.ps1` | Builds React locally into `dist`. |
-| `build-image.ps1` | Runs app build, then builds local Docker image. |
-| `Dockerfile` | Packages `dist` into Nginx. |
+| `build-app.ps1` | Runs local frontend build into `dist`. |
+| `build-image.ps1` | Builds the React app, then builds the local Nginx image. |
+| `Dockerfile` | Copies `dist` into Nginx. |
 
 ## Code Walkthrough
 
-### React State
+### Chat State
 
 ```tsx
-const [email, setEmail] = useState("customer@example.com");
-const [description, setDescription] = useState("");
+const [messages, setMessages] = useState<ChatMessage[]>([
+  {
+    role: "assistant",
+    content: "Hello. I can create support tickets from text or an uploaded pump screen image...",
+  },
+]);
+const [draft, setDraft] = useState("");
 const [photo, setPhoto] = useState<File | null>(null);
-const [ticket, setTicket] = useState<TicketResponse | null>(null);
-const [status, setStatus] = useState<TicketStatus | null>(null);
-const [chatQuestion, setChatQuestion] = useState("What is Bluefin mode?");
-const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 const [useRag, setUseRag] = useState(true);
 ```
 
 Explanation:
 
-- `email`, `description`, and `photo` hold the form inputs.
-- The ticket form allows image-only, text-only, or image-plus-text requests.
-- `ticket` stores the response after creating a new ticket.
-- `status` stores the response when checking latest ticket status.
-- `chatQuestion` stores the current assistant question.
-- `chatMessages` stores the visible chat history.
-- `useRag` controls whether the backend searches the Aster manual before
-  calling the model.
+- `messages` is the visible conversation.
+- `draft` is the text currently typed by the user.
+- `photo` is the optional image attachment.
+- `useRag` controls whether the backend searches the local manual.
 
-### Submit Ticket
+### Sending Text And Optional Image
 
 ```tsx
 const formData = new FormData();
-formData.append("customer_email", email);
-formData.append("description", description);
+formData.append("message", text || "Create a support ticket from the uploaded image.");
+formData.append("history", JSON.stringify(history));
+formData.append("use_rag", String(useRag));
 if (photo) {
   formData.append("photo", photo);
 }
@@ -79,17 +79,15 @@ if (photo) {
 
 Explanation:
 
-- Optional image upload requires `FormData`.
-- Field names must match the backend endpoint:
-  `customer_email`, `description`, and `photo`.
-- The backend model planner chooses `image_ticket` when `photo` exists, or
-  `text_ticket` for text-only requests.
-- Internally, the backend asks the local model for a JSON `plan_id`, expands
-  that id into agents and tools, then validates the plan before running the
-  selected agents.
+- The route uses multipart form data because it may contain an image.
+- The same endpoint handles text-only chat and image-plus-text ticket creation.
+- `history` lets the backend include short conversation context.
+- The image is uploaded only when the user attaches one.
+
+### Backend Call
 
 ```tsx
-const response = await fetch("/api/support/tickets", {
+const response = await fetch("/api/chat/upload", {
   method: "POST",
   body: formData,
 });
@@ -97,62 +95,45 @@ const response = await fetch("/api/support/tickets", {
 
 Explanation:
 
-- The browser calls `/api/support/tickets`.
-- Nginx forwards `/api/*` to the backend container.
+- The browser calls one route for all chat actions.
+- Nginx forwards `/api/chat/upload` to the FastAPI backend.
+- The backend asks the local model whether to answer or call an MCP tool.
 
-### Check Latest Status
+### Example Buttons
 
 ```tsx
-const response = await fetch(`/api/support/tickets?email=${encodeURIComponent(email)}`);
+const examples = [
+  { label: "Create text ticket", message: "Create ticket for customer@example.com...", useRag: true },
+  { label: "List tickets", message: "Get me list of my tickets for customer@example.com", useRag: false },
+  { label: "Ask manual", message: "What is Bluefin mode?", useRag: true },
+];
 ```
 
 Explanation:
 
-- This asks the backend for the latest ticket for the entered email.
-- `encodeURIComponent` makes the email safe inside a URL.
+- These buttons only fill the composer and set the RAG toggle.
+- They do not bypass the chat flow.
+- Sending still goes through `/api/chat/upload`.
 
-### Result Panel
+### Image Attachment
 
 ```tsx
-{status && (
-  <ResultCard
-    title={`Latest ticket #${status.ticket_id}`}
-    email={status.customer_email}
-    status={status.status}
-    errorCode={status.detected_error_code}
-    objects={[]}
-    steps={status.technical_steps ?? "No technical steps stored yet."}
-    emailSent={status.email_sent}
-  />
-)}
+<input
+  ref={fileInputRef}
+  className="hidden-file"
+  type="file"
+  accept="image/*"
+  onChange={(event) => setPhoto(event.target.files?.[0] ?? null)}
+/>
 ```
 
 Explanation:
 
-- `ResultCard` is reused for new-ticket results and status results.
-- Latest status does not return detected object labels, so `objects={[]}`.
+- The real file input is hidden so the UI can use an icon button.
+- Only image files are accepted.
+- The backend logs the image size and content type, not raw image bytes.
 
-### Assistant Chat
-
-```tsx
-const response = await fetch("/api/chat", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    message,
-    history,
-    use_rag: useRag,
-  }),
-});
-```
-
-Explanation:
-
-- The chat panel calls the backend `/api/chat` endpoint.
-- `message` is the current user question.
-- `history` is the recent chat history so the model has short conversation
-  context.
-- `use_rag` tells the backend whether to search the Aster Pump manual.
+### Manual/RAG Toggle
 
 ```tsx
 <input
@@ -164,56 +145,28 @@ Explanation:
 
 Explanation:
 
-- When checked, the model receives retrieved Aster manual context.
-- Use this for questions like `What is Bluefin mode?`.
-- When unchecked, the model answers from general knowledge.
-- Use this for questions like `Where is Egypt?`.
-
-```tsx
-const sourceLine = data.sources.length > 0 ? `\n\nSources: ${data.sources.join(", ")}` : "";
-```
-
-Explanation:
-
-- RAG answers can include source file names.
-- General answers normally have no sources.
-
-### Fixed Form Height
-
-```css
-.content-grid {
-  align-items: start;
-}
-
-.support-form {
-  align-self: start;
-  height: 560px;
-}
-```
-
-Explanation:
-
-- CSS grid normally stretches columns to match the tallest content.
-- `align-items: start` prevents the form from stretching when the ticket result
-  is long.
-- The form keeps a stable desktop height.
-
-## Nginx Proxy
-
-```nginx
-location /api/ {
-    proxy_pass http://aster-pump-aftercare-backend:8000/api/;
-}
-```
-
-Explanation:
-
-- The browser only talks to the frontend container.
-- Nginx forwards API calls to the backend over the Docker Compose network.
+- When checked, backend searches Qdrant for manual chunks.
+- When unchecked, backend asks the local model without manual context.
+- Ticket creation can still use RAG internally to select troubleshooting steps.
 
 ## Build And Deployment
 
-See:
+Build the app locally:
+
+```powershell
+.\build-app.ps1
+```
+
+Build the local Docker image:
+
+```powershell
+.\build-image.ps1
+```
+
+The Dockerfile expects the built `dist` folder, so the application build remains
+outside the container.
+
+For the full stack, see:
 
 ```text
 BUILD_AND_DEPLOY.md

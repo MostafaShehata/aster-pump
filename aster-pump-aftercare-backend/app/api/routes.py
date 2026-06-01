@@ -1,3 +1,4 @@
+import json
 import logging
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -5,7 +6,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from app.agents.workflow import aftercare_workflow
 from app.mcp.client import AftercareMcpClient
 from app.model.chat_client import OllamaChatService
-from app.schemas import ChatRequest, ChatResponse, TicketResponse, TicketStatusResponse
+from app.schemas import ChatMessage, ChatRequest, ChatResponse, TicketResponse, TicketStatusResponse
 
 
 router = APIRouter(prefix="/api")
@@ -41,6 +42,57 @@ async def chat(request: ChatRequest) -> ChatResponse:
             response.reply,
         )
         return response
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/chat/upload", response_model=ChatResponse)
+async def chat_with_optional_upload(
+    message: str = Form(...),
+    history: str = Form("[]"),
+    use_rag: bool = Form(False),
+    photo: UploadFile | None = File(None),
+) -> ChatResponse:
+    """Send one chat message plus an optional image through the LLM MCP agent."""
+
+    try:
+        raw_history = json.loads(history)
+        chat_history = [ChatMessage.model_validate(item) for item in raw_history]
+    except (json.JSONDecodeError, ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="History must be a JSON array of chat messages.") from exc
+
+    image_bytes = await photo.read() if photo is not None else b""
+    if photo is not None and not image_bytes:
+        raise HTTPException(status_code=400, detail="Photo file is empty.")
+
+    request = ChatRequest(message=message.strip(), history=chat_history, use_rag=use_rag)
+    logging.info(
+        "story.chat-upload | received chat request use_rag=%s history_items=%s message=%r image_filename=%s image_bytes=%s image_content_type=%s history=%s",
+        request.use_rag,
+        len(request.history),
+        request.message,
+        photo.filename if photo is not None else "",
+        len(image_bytes),
+        photo.content_type if photo is not None else "",
+        [{"role": item.role, "content": item.content} for item in request.history],
+    )
+    try:
+        response = await chat_service.chat_with_optional_image(
+            request,
+            image_filename=(photo.filename if photo is not None else "") or "uploaded-photo",
+            image_bytes=image_bytes,
+            image_content_type=(photo.content_type if photo is not None else None) or "application/octet-stream",
+        )
+        logging.info(
+            "story.chat-upload | completed chat request model=%s used_rag=%s sources=%s reply=%r",
+            response.model,
+            response.used_rag,
+            response.sources,
+            response.reply,
+        )
+        return response
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

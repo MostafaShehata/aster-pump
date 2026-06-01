@@ -11,7 +11,7 @@ jump into the component files when you need component-specific details.
 ```mermaid
 flowchart LR
     User["User Browser"] --> Frontend["Frontend\nReact + Nginx\nlocalhost:8080"]
-    Frontend --> Backend["Backend\nFastAPI + Model-Planned LangGraph\nlocalhost:8000"]
+    Frontend --> Backend["Backend\nFastAPI chat orchestrator\nlocalhost:8000"]
     Backend --> Model["Model\nOllama qwen3:1.7b\nlocalhost:11434"]
     Backend --> VectorDB["Vector DB\nQdrant\nlocalhost:6333"]
     Backend --> MCP["MCP Server\nOfficial MCP HTTP\nlocalhost:8200"]
@@ -204,7 +204,7 @@ The story prefixes mean:
 | Prefix | Meaning |
 | --- | --- |
 | `FRONTEND` | Nginx received a browser request or proxied an API call. |
-| `BACKEND` | FastAPI received the request, asked the model for a plan, validated it, ran LangGraph, called RAG, MCP, or Ollama. |
+| `BACKEND` | FastAPI received the chat request, asked the model for a tool decision, validated it, called RAG, MCP, or Ollama. |
 | `MCP` | The official MCP server ran a tool such as image analysis, ticket insert, or email. |
 | `IMAGE-AI` | The image analyzer inspected the uploaded file and returned detected labels. |
 | `MODEL` | Ollama startup and local model readiness. |
@@ -272,14 +272,13 @@ Open UI:
 http://localhost:8080
 ```
 
-## Step 6: Verify RAG
+## Step 6: Verify RAG Through Chat Upload
 
 ```powershell
-$body = @{ message='What does error code E-77 mean?'; use_rag=$true } | ConvertTo-Json
-Invoke-RestMethod -Method Post `
-  -Uri 'http://localhost:8000/api/chat' `
-  -ContentType 'application/json' `
-  -Body $body
+curl.exe -X POST http://localhost:8080/api/chat/upload `
+  -F "message=What does error code E-77 mean?" `
+  -F "use_rag=true" `
+  -F "history=[]"
 ```
 
 Expected answer should mention:
@@ -298,11 +297,10 @@ Why this proves RAG:
 ## Step 7: Verify General Chat Without RAG
 
 ```powershell
-$body = @{ message='Where is Egypt?'; use_rag=$false } | ConvertTo-Json
-Invoke-RestMethod -Method Post `
-  -Uri 'http://localhost:8000/api/chat' `
-  -ContentType 'application/json' `
-  -Body $body
+curl.exe -X POST http://localhost:8080/api/chat/upload `
+  -F "message=Where is Egypt?" `
+  -F "use_rag=false" `
+  -F "history=[]"
 ```
 
 Expected answer should say that Egypt is in North Africa.
@@ -312,41 +310,43 @@ Why this matters:
 - It proves the app is not only a support-ticket flow.
 - The same chat endpoint can answer general questions when RAG is disabled.
 
-## Step 8: Verify Full Agent Flow
+## Step 8: Verify Chat-First MCP Tool Flow
 
-Text-only dynamic routing:
+Text-only ticket creation:
 
 ```powershell
-curl.exe -X POST http://localhost:8080/api/support/tickets `
-  -F "customer_email=deployment-text-test@example.com" `
-  -F "description=The display shows E-77 on my AsterPump X17"
+curl.exe -X POST http://localhost:8080/api/chat/upload `
+  -F "message=Create ticket for deployment-text-test@example.com. The display shows E-77 on my AsterPump X17." `
+  -F "use_rag=true" `
+  -F "history=[]"
 ```
 
 Expected:
 
-- model planner chooses the `text_ticket` plan id
-- backend expands and validates the text-intake plan
-- backend validator approves `text_intake`
+- LLM planner chooses `open_ticket_from_text`
+- backend validates the tool call
 - image analyzer is skipped
-- ticket ID is returned
+- MCP creates and completes the ticket
+- ticket number is returned in chat
 - detected error code is `E-77`
 - email is marked sent
 
-Image-plus-text dynamic routing:
+Image-plus-text ticket creation:
 
 ```powershell
-curl.exe -X POST http://localhost:8080/api/support/tickets `
-  -F "customer_email=deployment-test@example.com" `
-  -F "description=The display shows E-77" `
+curl.exe -X POST http://localhost:8080/api/chat/upload `
+  -F "message=Create ticket for deployment-test@example.com" `
+  -F "use_rag=true" `
+  -F "history=[]" `
   -F "photo=@C:\ai-workspace\lama-local-llm\aster-pump\aster-pump-aftercare-backend\docs\assets\test-images\asterpump_x17_e77_screen.png"
 ```
 
 Expected:
 
-- model planner chooses the `image_ticket` plan id
-- backend expands and validates the image-intake plan
-- backend validator approves `image_intake`
-- ticket ID is returned
+- LLM planner chooses `open_ticket_from_image`
+- backend validates that an image exists
+- MCP calls the Image AI service
+- ticket number is returned in chat
 - status is `completed`
 - detected error code is `E-77`
 - email is marked sent
@@ -354,8 +354,8 @@ Expected:
 What this tests:
 
 1. Frontend Nginx proxy
-2. Backend FastAPI endpoint
-3. Ollama model planner, backend plan expansion, and backend plan validator
+2. Backend FastAPI chat upload endpoint
+3. Ollama tool planner and backend tool validation
 4. MCP tool calls
 5. Image AI service when an image is present
 6. PostgreSQL insert/update

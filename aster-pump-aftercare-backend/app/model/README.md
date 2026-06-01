@@ -15,13 +15,17 @@ to produce the final user-facing answer.
 
 ## Main Flow
 
-1. `OllamaChatService.chat(...)` receives a `ChatRequest`.
+1. `OllamaChatService.chat_with_optional_image(...)` receives a `ChatRequest`
+   and optional image bytes.
 2. RAG context is retrieved when `use_rag=true`.
 3. `ChatToolPlanner` asks Ollama for a JSON decision.
 4. If the decision is `tool_call`, `McpToolExecutor` calls MCP.
-5. For ticket lookup tools, backend formats the MCP result immediately for a
+5. For ticket creation tools, the backend performs the full MCP workflow:
+   analyze image when needed, create ticket, retrieve RAG troubleshooting
+   steps, update ticket, and send email.
+6. For ticket lookup tools, backend formats the MCP result immediately for a
    fast UI response.
-6. For future non-ticket tools, `PromptBuilder` can build final messages with
+7. For future non-ticket tools, `PromptBuilder` can build final messages with
    the compact tool result and ask Ollama to write the final reply.
 
 ## Tool Decision
@@ -64,6 +68,8 @@ The chat agent allows only these tools:
 
 ```python
 TOOL_CATALOG = {
+    "open_ticket_from_image": {...},
+    "open_ticket_from_text": {...},
     "get_ticket": {...},
     "get_latest_ticket_for_customer": {...},
     "get_tickets_for_customer": {...},
@@ -75,6 +81,55 @@ Explanation:
 - The model cannot call arbitrary MCP tools.
 - The backend rejects unsupported tool names.
 - Missing required arguments make the assistant ask the user for more info.
+- Image ticket creation is only allowed when the request contains uploaded
+  image bytes.
+
+## Image And Text Ticket Tools
+
+Code:
+
+```python
+if decision["tool_name"] == "open_ticket_from_image":
+    tool_result = await self.open_ticket_from_image(
+        request=request,
+        customer_email=str(decision["arguments"]["customer_email"]),
+        image_filename=image_filename or "uploaded-photo",
+        image_bytes=image_bytes,
+        image_content_type=image_content_type,
+    )
+elif decision["tool_name"] == "open_ticket_from_text":
+    tool_result = await self.open_ticket_from_text(
+        request=request,
+        customer_email=str(decision["arguments"]["customer_email"]),
+    )
+```
+
+Explanation:
+
+- The LLM chooses the high-level tool.
+- The backend keeps ownership of raw bytes and workflow execution.
+- `open_ticket_from_image` calls MCP image analysis first.
+- `open_ticket_from_text` extracts simple labels from the user message.
+
+Code:
+
+```python
+ticket = await self.tool_executor.mcp_client.create_ticket(
+    customer_email=customer_email,
+    description=description,
+    detected_objects=detected_objects,
+)
+rag_result = rag_service.retrieve_for_question(question)
+ticket = await self.tool_executor.mcp_client.update_technical_steps(ticket["id"], technical_steps)
+await self.tool_executor.mcp_client.send_customer_email(...)
+```
+
+Explanation:
+
+- Ticket creation still happens through MCP.
+- Manual troubleshooting steps come from RAG.
+- Email sending is simulated through the MCP email tool.
+- The chat returns a compact deterministic summary with the ticket number.
 
 ## MCP Execution
 
@@ -124,6 +179,8 @@ Code:
 
 ```python
 if decision["tool_name"] in {
+    "open_ticket_from_image",
+    "open_ticket_from_text",
     "get_ticket",
     "get_latest_ticket_for_customer",
     "get_tickets_for_customer",
