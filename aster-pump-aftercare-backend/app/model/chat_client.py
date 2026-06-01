@@ -394,15 +394,28 @@ class OllamaChatService:
 
         if decision["action"] == "tool_call":
             tool_result = await self.tool_executor.execute(decision["tool_name"], decision["arguments"])
-            messages = self.prompt_builder.build_tool_result_messages(
-                request=request,
-                decision=decision,
-                tool_result=tool_result,
-                rag_context=rag_result.context,
-            )
-            reply = await self.ollama_client.chat(messages, temperature=0.1, num_predict=192)
-            if not reply:
+            if decision["tool_name"] in {
+                "get_ticket",
+                "get_latest_ticket_for_customer",
+                "get_tickets_for_customer",
+            }:
                 reply = self.fallback_tool_reply(decision["tool_name"], tool_result)
+                logging.info(
+                    "story.llm-agent | completed ticket MCP tool with deterministic reply tool=%s arguments=%s reply=%r",
+                    decision["tool_name"],
+                    decision["arguments"],
+                    reply,
+                )
+            else:
+                messages = self.prompt_builder.build_tool_result_messages(
+                    request=request,
+                    decision=decision,
+                    tool_result=tool_result,
+                    rag_context=rag_result.context,
+                )
+                reply = await self.ollama_client.chat(messages, temperature=0.1, num_predict=192)
+                if not reply:
+                    reply = self.fallback_tool_reply(decision["tool_name"], tool_result)
             logging.info(
                 "story.llm-agent | completed with MCP tool=%s arguments=%s reply=%r",
                 decision["tool_name"],
@@ -438,9 +451,23 @@ class OllamaChatService:
             lines = [f"I found {len(tickets)} ticket(s):"]
             for ticket in tickets:
                 lines.append(
-                    f"- Ticket #{ticket.get('id')}: status={ticket.get('status')}, "
-                    f"error={ticket.get('detected_error_code')}, email_sent={ticket.get('email_sent')}"
+                    self.format_ticket_line(ticket)
                 )
             return "\n".join(lines)
 
+        if tool_name in {"get_ticket", "get_latest_ticket_for_customer"}:
+            if not tool_result:
+                return "No matching ticket was found."
+            if isinstance(tool_result, dict):
+                return self.format_ticket_line(tool_result)
+
         return f"The MCP tool `{tool_name}` returned: {tool_result}"
+
+    def format_ticket_line(self, ticket: dict[str, Any]) -> str:
+        """Format one ticket row for a fast customer-facing reply."""
+
+        return (
+            f"Ticket #{ticket.get('id')}: status={ticket.get('status')}, "
+            f"error={ticket.get('detected_error_code') or 'none'}, "
+            f"email_sent={'yes' if ticket.get('email_sent') else 'no'}"
+        )

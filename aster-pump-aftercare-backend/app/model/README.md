@@ -19,8 +19,10 @@ to produce the final user-facing answer.
 2. RAG context is retrieved when `use_rag=true`.
 3. `ChatToolPlanner` asks Ollama for a JSON decision.
 4. If the decision is `tool_call`, `McpToolExecutor` calls MCP.
-5. `PromptBuilder` builds final messages with the compact tool result.
-6. Ollama writes the final reply.
+5. For ticket lookup tools, backend formats the MCP result immediately for a
+   fast UI response.
+6. For future non-ticket tools, `PromptBuilder` can build final messages with
+   the compact tool result and ask Ollama to write the final reply.
 
 ## Tool Decision
 
@@ -112,6 +114,31 @@ Explanation:
 - The full database row remains in MCP/PostgreSQL, but the final LLM prompt is compact.
 
 ## Final Answer
+
+Ticket lookup tools return deterministic summaries after MCP succeeds. This
+keeps the UI responsive on the tiny CPU model while still preserving the agent
+behavior: the LLM decides the tool, the backend validates it, and MCP performs
+the lookup.
+
+Code:
+
+```python
+if decision["tool_name"] in {
+    "get_ticket",
+    "get_latest_ticket_for_customer",
+    "get_tickets_for_customer",
+}:
+    reply = self.fallback_tool_reply(decision["tool_name"], tool_result)
+```
+
+Explanation:
+
+- The LLM still made the tool decision.
+- MCP still returned the ticket data.
+- The backend formats the result directly to avoid a slow second LLM call.
+
+For non-ticket MCP tools, the service can still ask the model to write the final
+answer:
 
 Code:
 
