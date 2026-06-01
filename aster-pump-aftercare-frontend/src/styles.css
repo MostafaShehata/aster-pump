@@ -93,7 +93,7 @@ button {
 
 .chat-page {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   padding: 34px;
 }
 
@@ -115,6 +115,53 @@ button {
 h1 {
   font-size: 34px;
   line-height: 1.1;
+  margin: 0;
+}
+
+.customer-strip {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d9e3ed;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(21, 37, 55, 0.06);
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(260px, 420px) minmax(0, 1fr);
+  margin-bottom: 16px;
+  padding: 14px 16px;
+}
+
+.customer-strip label {
+  display: grid;
+  gap: 8px;
+}
+
+.customer-strip span {
+  align-items: center;
+  color: #42526a;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 900;
+  gap: 8px;
+  text-transform: uppercase;
+}
+
+.customer-strip input {
+  border: 1px solid #cbd8e6;
+  border-radius: 8px;
+  min-height: 44px;
+  outline: none;
+  padding: 0 12px;
+}
+
+.customer-strip input:focus {
+  border-color: #145c6d;
+  box-shadow: 0 0 0 3px rgba(20, 92, 109, 0.16);
+}
+
+.customer-strip p {
+  color: #5f6f85;
+  line-height: 1.45;
   margin: 0;
 }
 
@@ -355,6 +402,10 @@ h1 {
     align-items: flex-start;
     flex-direction: column;
     gap: 14px;
+  }
+
+  .customer-strip {
+    grid-template-columns: 1fr;
   }
 
   .chat-card {

@@ -4,7 +4,6 @@ import {
   BookOpenText,
   Bot,
   BrainCircuit,
-  Camera,
   Database,
   FileImage,
   Loader2,
@@ -35,17 +34,17 @@ type ChatResponse = {
 const examples = [
   {
     label: "Create text ticket",
-    message: "Create ticket for customer@example.com. The display shows E-77 on my AsterPump X17.",
+    message: "Create ticket. The display shows E-77 on my AsterPump X17.",
     useRag: true,
   },
   {
     label: "List tickets",
-    message: "Get me list of my tickets for customer@example.com",
+    message: "List my tickets",
     useRag: false,
   },
   {
     label: "Latest status",
-    message: "Get latest ticket status for customer@example.com",
+    message: "Get latest ticket status",
     useRag: false,
   },
   {
@@ -68,6 +67,7 @@ function App() {
         "Hello. I can create support tickets from text or an uploaded pump screen image, list your tickets, check latest status, answer from the AsterPump manual, or answer general questions.",
     },
   ]);
+  const [email, setEmail] = useState("customer@example.com");
   const [draft, setDraft] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
   const [useRag, setUseRag] = useState(true);
@@ -87,6 +87,7 @@ function App() {
     const history = messages.slice(-8);
     const formData = new FormData();
     formData.append("message", text || "Create a support ticket from the uploaded image.");
+    formData.append("customer_email", email.trim());
     formData.append("history", JSON.stringify(history));
     formData.append("use_rag", String(useRag));
     if (photo) {
@@ -184,6 +185,19 @@ function App() {
             Clear
           </button>
         </header>
+
+        <section className="customer-strip" aria-label="Customer identity">
+          <label>
+            <span><Mail size={17} /> Customer email</span>
+            <input
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              type="email"
+              placeholder="customer@example.com"
+            />
+          </label>
+          <p>This email is sent with every chat request and used when the assistant needs ticket tools.</p>
+        </section>
 
         <section className="chat-card" aria-label="Aftercare chat">
           <div className="example-row">

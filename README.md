@@ -2,10 +2,10 @@
 
 Local Docker Desktop proof of concept for an after-purchase support assistant.
 
-The user experience is intentionally simple: one chat screen. The customer can
-type a message, optionally upload an image, optionally enable manual/RAG
-context, and the backend decides whether to answer directly or call approved
-MCP tools.
+The user experience is intentionally simple: one chat screen plus one customer
+email field at the top of the page. The customer can type a message, optionally
+upload an image, optionally enable manual/RAG context, and the backend decides
+whether to answer directly or call approved MCP tools.
 
 ## Business Use Cases
 
@@ -17,9 +17,11 @@ The customer can create a support ticket by typing a request such as:
 Create ticket for customer@example.com. The display shows E-77 on my AsterPump X17.
 ```
 
-The customer can also attach a pump screen image and include the email in the
-chat message. The LLM planner sees the text and whether an image exists. It can
-request the `open_ticket_from_image` or `open_ticket_from_text` tool workflow.
+The customer can also attach a pump screen image. The email comes from the
+page-level email field, so the chat box can stay focused on the actual request.
+The LLM planner sees the text, the ticket-related email context, and whether an
+image exists. It can request the `open_ticket_from_image` or
+`open_ticket_from_text` tool workflow.
 
 Business outcome:
 
@@ -61,7 +63,7 @@ sequenceDiagram
     participant DB as PostgreSQL
     participant Mail as Simulated Email
 
-    Browser->>Nginx: Text message plus optional image
+    Browser->>Nginx: Customer email, text message, optional image
     Nginx->>API: POST /api/chat/upload
     alt Use manual is enabled
         API->>RAG: Retrieve manual chunks
@@ -212,13 +214,14 @@ http://localhost:8080
 
 Useful UI tests:
 
-- `Create ticket for customer@example.com. The display shows E-77 on my AsterPump X17.`
+- set email to `customer@example.com`, then ask
+  `Create ticket. The display shows E-77 on my AsterPump X17.`
 - attach `aster-pump-aftercare-backend/docs/assets/test-images/asterpump_x17_e77_screen.png`
   and type `Create ticket for customer@example.com`
 - with **Use manual** checked, ask `What is Bluefin mode?`
 - with **Use manual** unchecked, ask `Where is Egypt?`
-- ask `Get me list of my tickets for customer@example.com`
-- ask `Get latest ticket status for customer@example.com`
+- ask `List my tickets`
+- ask `Get latest ticket status`
 
 ## Daily Start And Stop
 

@@ -2,9 +2,9 @@
 
 React chat UI for the Aster Pump Aftercare PoC.
 
-The frontend is now one simple chat screen. The user can type a message, attach
-an optional pump screen image, enable or disable manual/RAG context, and send
-the request to the backend.
+The frontend is now one simple chat screen. The user enters customer email once
+at the top of the page, types a message, attaches an optional pump screen image,
+enables or disables manual/RAG context, and sends the request to the backend.
 
 ## Technology Brief
 
@@ -25,8 +25,8 @@ folder with Nginx and proxies browser `/api/*` calls to the backend.
 ## User Functions
 
 - create a ticket from typed text
-- create a ticket from an uploaded image plus email in chat text
-- list tickets for an email address
+- create a ticket from an uploaded image plus the page-level email
+- list tickets for the page-level email
 - get latest ticket status
 - ask manual/RAG questions such as `What is Bluefin mode?`
 - ask general model questions such as `Where is Egypt?`
@@ -54,6 +54,7 @@ const [messages, setMessages] = useState<ChatMessage[]>([
   },
 ]);
 const [draft, setDraft] = useState("");
+const [email, setEmail] = useState("customer@example.com");
 const [photo, setPhoto] = useState<File | null>(null);
 const [useRag, setUseRag] = useState(true);
 ```
@@ -62,14 +63,34 @@ Explanation:
 
 - `messages` is the visible conversation.
 - `draft` is the text currently typed by the user.
+- `email` is the page-level customer email sent with every request.
 - `photo` is the optional image attachment.
 - `useRag` controls whether the backend searches the local manual.
+
+### Customer Email
+
+```tsx
+<input
+  value={email}
+  onChange={(event) => setEmail(event.target.value)}
+  type="email"
+  placeholder="customer@example.com"
+/>
+```
+
+Explanation:
+
+- The user does not need to type the email inside every chat message.
+- The email is sent as a separate multipart field named `customer_email`.
+- The backend uses it only when the request needs ticket tools.
+- General questions and manual questions remain clean chat text.
 
 ### Sending Text And Optional Image
 
 ```tsx
 const formData = new FormData();
 formData.append("message", text || "Create a support ticket from the uploaded image.");
+formData.append("customer_email", email.trim());
 formData.append("history", JSON.stringify(history));
 formData.append("use_rag", String(useRag));
 if (photo) {
@@ -81,6 +102,8 @@ Explanation:
 
 - The route uses multipart form data because it may contain an image.
 - The same endpoint handles text-only chat and image-plus-text ticket creation.
+- `customer_email` lets the backend list tickets, get latest status, and create
+  tickets even when the chat text only says `List my tickets`.
 - `history` lets the backend include short conversation context.
 - The image is uploaded only when the user attaches one.
 
@@ -103,8 +126,8 @@ Explanation:
 
 ```tsx
 const examples = [
-  { label: "Create text ticket", message: "Create ticket for customer@example.com...", useRag: true },
-  { label: "List tickets", message: "Get me list of my tickets for customer@example.com", useRag: false },
+  { label: "Create text ticket", message: "Create ticket. The display shows E-77...", useRag: true },
+  { label: "List tickets", message: "List my tickets", useRag: false },
   { label: "Ask manual", message: "What is Bluefin mode?", useRag: true },
 ];
 ```

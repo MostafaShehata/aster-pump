@@ -197,6 +197,24 @@ class ChatToolPlanner:
                 }
                 logging.info("story.llm-agent.planner | corrected ticket creation decision=%s", normalized)
                 return normalized
+            if detected_email and self.looks_like_latest_ticket_request(message):
+                normalized = {
+                    "action": "tool_call",
+                    "tool_name": "get_latest_ticket_for_customer",
+                    "arguments": {"customer_email": detected_email},
+                    "reason": "Backend validation routed the latest-ticket request to the MCP lookup tool.",
+                }
+                logging.info("story.llm-agent.planner | corrected latest-ticket decision=%s", normalized)
+                return normalized
+            if detected_email and self.looks_like_ticket_list_request(message):
+                normalized = {
+                    "action": "tool_call",
+                    "tool_name": "get_tickets_for_customer",
+                    "arguments": {"customer_email": detected_email},
+                    "reason": "Backend validation routed the ticket-list request to the MCP lookup tool.",
+                }
+                logging.info("story.llm-agent.planner | corrected ticket-list decision=%s", normalized)
+                return normalized
             answer = str(decision.get("answer") or "")
             if not answer and self.looks_like_ticket_list_request(message) and detected_email is None:
                 answer = "Please provide your email address so I can look up your tickets."
@@ -278,7 +296,7 @@ class ChatToolPlanner:
             return "Return tool_call open_ticket_from_text with the detected customer_email."
         if detected_ticket_id is not None:
             return "If the user asks about this ticket number, return tool_call get_ticket."
-        if any(word in lowered for word in ["latest", "last", "recent"]) and "ticket" in lowered and detected_email:
+        if self.looks_like_latest_ticket_request(message) and detected_email:
             return "Return tool_call get_latest_ticket_for_customer with the detected customer_email."
         if self.looks_like_ticket_list_request(message) and detected_email:
             return "Return tool_call get_tickets_for_customer with the detected customer_email."
@@ -293,6 +311,15 @@ class ChatToolPlanner:
 
         lowered = message.lower()
         return "ticket" in lowered and any(word in lowered for word in ["list", "all", "my", "status", "show", "get"])
+
+    def looks_like_latest_ticket_request(self, message: str) -> bool:
+        """Return true when the user appears to ask for the newest ticket."""
+
+        lowered = message.lower()
+        return (
+            any(word in lowered for word in ["latest", "last", "recent", "newest"])
+            and any(word in lowered for word in ["ticket", "status", "request"])
+        )
 
     def looks_like_ticket_creation_request(self, message: str) -> bool:
         """Return true when the user appears to want a new support ticket."""

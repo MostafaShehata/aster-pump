@@ -163,6 +163,7 @@ Code:
 @router.post("/chat/upload", response_model=ChatResponse)
 async def chat_with_optional_upload(
     message: str = Form(...),
+    customer_email: str = Form(""),
     history: str = Form("[]"),
     use_rag: bool = Form(False),
     photo: UploadFile | None = File(None),
@@ -173,8 +174,28 @@ Explanation:
 
 - This is the primary route used by the simplified React UI.
 - It accepts normal chat text and an optional image in the same request.
+- `customer_email` is the page-level email field from the UI.
 - `history` is a JSON string because multipart form fields are text values.
 - `photo` is optional, so text-only questions still use this route.
+
+Code:
+
+```python
+normalized_message = merge_customer_email_into_tool_message(
+    message=message.strip(),
+    customer_email=customer_email.strip(),
+    has_image=bool(image_bytes),
+)
+request = ChatRequest(message=normalized_message, history=chat_history, use_rag=use_rag)
+```
+
+Explanation:
+
+- The UI sends email with every request.
+- The backend merges that email into the message only when the request looks
+  ticket-related.
+- This lets `List my tickets` work without typing the email in the chat box.
+- General questions like `Where is Egypt?` stay unchanged.
 
 Code:
 

@@ -49,6 +49,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
 @router.post("/chat/upload", response_model=ChatResponse)
 async def chat_with_optional_upload(
     message: str = Form(...),
+    customer_email: str = Form(""),
     history: str = Form("[]"),
     use_rag: bool = Form(False),
     photo: UploadFile | None = File(None),
@@ -65,11 +66,17 @@ async def chat_with_optional_upload(
     if photo is not None and not image_bytes:
         raise HTTPException(status_code=400, detail="Photo file is empty.")
 
-    request = ChatRequest(message=message.strip(), history=chat_history, use_rag=use_rag)
+    normalized_message = merge_customer_email_into_tool_message(
+        message=message.strip(),
+        customer_email=customer_email.strip(),
+        has_image=bool(image_bytes),
+    )
+    request = ChatRequest(message=normalized_message, history=chat_history, use_rag=use_rag)
     logging.info(
-        "story.chat-upload | received chat request use_rag=%s history_items=%s message=%r image_filename=%s image_bytes=%s image_content_type=%s history=%s",
+        "story.chat-upload | received chat request use_rag=%s history_items=%s customer_email=%s message=%r image_filename=%s image_bytes=%s image_content_type=%s history=%s",
         request.use_rag,
         len(request.history),
+        customer_email.strip(),
         request.message,
         photo.filename if photo is not None else "",
         len(image_bytes),
@@ -190,3 +197,32 @@ def map_ticket_status(ticket: dict) -> TicketStatusResponse:
         technical_steps=ticket.get("technical_steps"),
         email_sent=ticket["email_sent"],
     )
+
+
+def merge_customer_email_into_tool_message(message: str, customer_email: str, has_image: bool) -> str:
+    """Attach page-level email to ticket-related chat text before LLM planning."""
+
+    if not customer_email or "@" in message:
+        return message
+
+    lowered = message.lower()
+    ticket_related = has_image or any(
+        word in lowered
+        for word in [
+            "ticket",
+            "status",
+            "request",
+            "issue",
+            "problem",
+            "error",
+            "display",
+            "screen",
+            "list",
+            "latest",
+            "last",
+        ]
+    )
+    if not ticket_related:
+        return message
+
+    return f"{message}\nCustomer email: {customer_email}"

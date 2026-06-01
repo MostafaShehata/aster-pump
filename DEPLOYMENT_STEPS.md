@@ -316,7 +316,8 @@ Text-only ticket creation:
 
 ```powershell
 curl.exe -X POST http://localhost:8080/api/chat/upload `
-  -F "message=Create ticket for deployment-text-test@example.com. The display shows E-77 on my AsterPump X17." `
+  -F "message=Create ticket. The display shows E-77 on my AsterPump X17." `
+  -F "customer_email=deployment-text-test@example.com" `
   -F "use_rag=true" `
   -F "history=[]"
 ```
@@ -335,7 +336,8 @@ Image-plus-text ticket creation:
 
 ```powershell
 curl.exe -X POST http://localhost:8080/api/chat/upload `
-  -F "message=Create ticket for deployment-test@example.com" `
+  -F "message=Create ticket" `
+  -F "customer_email=deployment-test@example.com" `
   -F "use_rag=true" `
   -F "history=[]" `
   -F "photo=@C:\ai-workspace\lama-local-llm\aster-pump\aster-pump-aftercare-backend\docs\assets\test-images\asterpump_x17_e77_screen.png"
