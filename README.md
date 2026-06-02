@@ -188,6 +188,15 @@ Start here:
 DEPLOYMENT_STEPS.md
 ```
 
+For business-flow code tracing with logs, read:
+
+- `BUSINESS_FLOW_00_TRACE_INDEX.md`
+- `BUSINESS_FLOW_01_GENERAL_CHAT.md`
+- `BUSINESS_FLOW_02_RAG_MANUAL_QUESTION.md`
+- `BUSINESS_FLOW_03_TICKET_LOOKUP.md`
+- `BUSINESS_FLOW_04_TEXT_TICKET_CREATION.md`
+- `BUSINESS_FLOW_05_IMAGE_TICKET_CREATION.md`
+
 Then read component-specific guides:
 
 - `aster-pump-aftercare-frontend/README.md`
